@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+.env
+
+# Data
+data/
+*.db
+
+# Logs
+*.log
+/tmp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Node
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env.local
+.env.production
+
+# Azure
+.azure/

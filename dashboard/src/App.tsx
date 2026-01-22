@@ -1,0 +1,407 @@
+import { useState, useEffect } from 'react'
+
+interface Stats {
+  total_bets: number
+  wins: number
+  losses: number
+  total_wagered: number
+  total_pnl: number
+  win_rate: number
+}
+
+interface Position {
+  id: number
+  market_id: string
+  market_name: string
+  asset: string
+  side: string
+  entry_price: number
+  amount_usd: number
+  shares: number
+  target_price: number
+  start_time: string
+  end_time: string
+  status: string
+  exit_price: number | null
+  pnl: number | null
+  resolved_at: string | null
+  created_at: string
+  // Live data
+  current_price?: number
+  current_up_price?: number
+  current_down_price?: number
+  live_crypto_price?: number
+  win_odds?: number
+  potential_profit?: number
+  unrealized_pnl?: number
+}
+
+interface CryptoPrices {
+  BTC: number
+  ETH: number
+  SOL: number
+  XRP: number
+}
+
+interface DashboardData {
+  stats: Stats
+  open_positions: Position[]
+  closed_positions: Position[]
+  crypto_prices: CryptoPrices
+  timestamp: string
+}
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+function StatCard({ label, value, subValue, color = 'white' }: { label: string; value: string; subValue?: string; color?: string }) {
+  const colorClasses: Record<string, string> = {
+    green: 'text-poly-green glow-green',
+    red: 'text-poly-red glow-red',
+    white: 'text-white',
+    yellow: 'text-yellow-400',
+  }
+  
+  return (
+    <div className="bg-poly-card border border-poly-border rounded-lg p-4">
+      <div className="text-gray-400 text-xs uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${colorClasses[color]}`}>{value}</div>
+      {subValue && <div className="text-gray-500 text-sm mt-1">{subValue}</div>}
+    </div>
+  )
+}
+
+function PriceCard({ asset, price, color }: { asset: string; price: number; color: string }) {
+  const bgColors: Record<string, string> = {
+    BTC: 'bg-orange-500/20 border-orange-500/50',
+    ETH: 'bg-blue-500/20 border-blue-500/50',
+    SOL: 'bg-purple-500/20 border-purple-500/50',
+    XRP: 'bg-gray-500/20 border-gray-500/50',
+  }
+  
+  return (
+    <div className={`rounded-lg p-3 border ${bgColors[asset] || 'bg-gray-700'}`}>
+      <div className="text-xs text-gray-400">{asset}</div>
+      <div className="text-lg font-bold font-mono">${price.toLocaleString()}</div>
+    </div>
+  )
+}
+
+function AssetIcon({ asset }: { asset: string }) {
+  const colors: Record<string, string> = {
+    BTC: 'bg-orange-500',
+    ETH: 'bg-blue-500',
+    SOL: 'bg-purple-500',
+    XRP: 'bg-gray-500',
+  }
+
+  return (
+    <div className={`w-10 h-10 rounded-full ${colors[asset] || 'bg-gray-600'} flex items-center justify-center text-xs font-bold`}>
+      {asset}
+    </div>
+  )
+}
+
+function PositionCard({ position, isOpen }: { position: Position; isOpen: boolean }) {
+  const formatTime = (iso: string) => {
+    const date = new Date(iso)
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const getTimeRemaining = (endTime: string) => {
+    const end = new Date(endTime)
+    const now = new Date()
+    const diff = end.getTime() - now.getTime()
+    if (diff <= 0) return 'Resolving...'
+    const mins = Math.floor(diff / 60000)
+    const secs = Math.floor((diff % 60000) / 1000)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const winOdds = position.win_odds || (position.entry_price * 100)
+  const oddsColor = winOdds >= 60 ? 'text-poly-green' : winOdds >= 40 ? 'text-yellow-400' : 'text-poly-red'
+
+  return (
+    <div className={`p-4 rounded-xl border ${
+      isOpen 
+        ? 'bg-poly-card/80 border-poly-border' 
+        : position.status === 'won' 
+          ? 'bg-poly-green/10 border-poly-green/30' 
+          : 'bg-poly-red/10 border-poly-red/30'
+    }`}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <AssetIcon asset={position.asset} />
+      <div>
+            <div className="font-bold text-lg">
+              {position.asset} <span className={position.side === 'Up' ? 'text-poly-green' : 'text-poly-red'}>{position.side}</span>
+            </div>
+            <div className="text-xs text-gray-500">
+              {formatTime(position.start_time)} - {formatTime(position.end_time)}
+            </div>
+          </div>
+        </div>
+        {isOpen && (
+          <div className="text-right">
+            <div className="text-2xl font-mono text-yellow-400">
+              ⏱ {getTimeRemaining(position.end_time)}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Details Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        {/* Entry Price */}
+        <div className="bg-black/20 rounded-lg p-2">
+          <div className="text-gray-500 text-xs">Entry Price</div>
+          <div className="font-mono font-bold">{(position.entry_price * 100).toFixed(1)}¢</div>
+        </div>
+        
+        {/* Current Price */}
+        {isOpen && position.current_price !== undefined && (
+          <div className="bg-black/20 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">Current Price</div>
+            <div className={`font-mono font-bold ${position.current_price > position.entry_price ? 'text-poly-green' : position.current_price < position.entry_price ? 'text-poly-red' : ''}`}>
+              {(position.current_price * 100).toFixed(1)}¢
+            </div>
+          </div>
+        )}
+        
+        {/* Win Odds */}
+        {isOpen && (
+          <div className="bg-black/20 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">Win Odds</div>
+            <div className={`font-mono font-bold ${oddsColor}`}>
+              {winOdds.toFixed(0)}%
+            </div>
+          </div>
+        )}
+        
+        {/* Bet Amount */}
+        <div className="bg-black/20 rounded-lg p-2">
+          <div className="text-gray-500 text-xs">Bet Amount</div>
+          <div className="font-mono font-bold">${position.amount_usd.toFixed(2)}</div>
+        </div>
+        
+        {/* Potential Profit (if open) or P&L (if closed) */}
+        {isOpen ? (
+          <div className="bg-black/20 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">If Win</div>
+            <div className="font-mono font-bold text-poly-green">
+              +${(position.potential_profit || (position.shares - position.amount_usd)).toFixed(2)}
+            </div>
+          </div>
+        ) : (
+          <div className="bg-black/20 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">Result</div>
+            <div className={`font-mono font-bold ${position.pnl && position.pnl >= 0 ? 'text-poly-green' : 'text-poly-red'}`}>
+              {position.status === 'won' ? '✅ WON' : '❌ LOST'} {position.pnl && position.pnl >= 0 ? '+' : ''}${position.pnl?.toFixed(2)}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Live Crypto Price */}
+      {isOpen && position.live_crypto_price !== undefined && position.live_crypto_price > 0 && (
+        <div className="mt-3 pt-3 border-t border-poly-border/50">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-500">Live {position.asset} Price:</span>
+            <span className="font-mono font-bold">${position.live_crypto_price.toLocaleString()}</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Market Prices */}
+      {isOpen && position.current_up_price !== undefined && (
+        <div className="mt-2 flex gap-4 text-xs">
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500">Up:</span>
+            <span className="font-mono text-poly-green">{(position.current_up_price * 100).toFixed(1)}¢</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500">Down:</span>
+            <span className="font-mono text-poly-red">{(position.current_down_price! * 100).toFixed(1)}¢</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function App() {
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+
+  const fetchData = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/dashboard`)
+      if (!response.ok) throw new Error('Failed to fetch data')
+      const json = await response.json()
+      setData(json)
+      setError(null)
+      setLastUpdate(new Date())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+    const interval = setInterval(fetchData, 5000) // Refresh every 5 seconds
+    return () => clearInterval(interval)
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-poly-dark flex items-center justify-center">
+        <div className="text-2xl text-gray-400 animate-pulse">Loading...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-poly-dark flex flex-col items-center justify-center gap-4">
+        <div className="text-2xl text-poly-red">⚠️ Connection Error</div>
+        <div className="text-gray-400">{error}</div>
+        <div className="text-sm text-gray-500">API: {API_URL}</div>
+        <button 
+          onClick={() => { setLoading(true); fetchData(); }}
+          className="mt-4 px-4 py-2 bg-poly-card border border-poly-border rounded-lg hover:bg-poly-border transition"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  const stats = data?.stats || { total_bets: 0, wins: 0, losses: 0, total_wagered: 0, total_pnl: 0, win_rate: 0 }
+  const openPositions = data?.open_positions || []
+  const closedPositions = data?.closed_positions || []
+  const cryptoPrices = data?.crypto_prices || { BTC: 0, ETH: 0, SOL: 0, XRP: 0 }
+
+  return (
+    <div className="min-h-screen bg-poly-dark p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-3">
+              <span className="text-3xl md:text-4xl">₿</span>
+              15-Min Market Maker
+            </h1>
+            <p className="text-gray-500 mt-1">Polymarket Crypto Simulation</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="text-xs text-gray-500">Last update</div>
+              <div className="text-sm text-gray-400">{lastUpdate?.toLocaleTimeString()}</div>
+            </div>
+            <div className="w-3 h-3 bg-poly-green rounded-full pulse-green"></div>
+          </div>
+        </div>
+
+        {/* Live Crypto Prices */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <PriceCard asset="BTC" price={cryptoPrices.BTC} color="orange" />
+          <PriceCard asset="ETH" price={cryptoPrices.ETH} color="blue" />
+          <PriceCard asset="SOL" price={cryptoPrices.SOL} color="purple" />
+          <PriceCard asset="XRP" price={cryptoPrices.XRP} color="gray" />
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+          <StatCard 
+            label="Total Bets" 
+            value={stats.total_bets.toString()} 
+          />
+          <StatCard 
+            label="Wins" 
+            value={stats.wins.toString()} 
+            color="green"
+          />
+          <StatCard 
+            label="Losses" 
+            value={stats.losses.toString()} 
+            color="red"
+          />
+          <StatCard 
+            label="Win Rate" 
+            value={`${stats.win_rate.toFixed(1)}%`}
+            subValue={`${stats.wins}/${stats.total_bets}`}
+            color={stats.win_rate >= 50 ? 'green' : 'red'}
+          />
+          <StatCard 
+            label="Total P&L" 
+            value={`$${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toFixed(2)}`}
+            subValue={`Wagered: $${stats.total_wagered.toFixed(2)}`}
+            color={stats.total_pnl >= 0 ? 'green' : 'red'}
+          />
+        </div>
+
+        {/* Positions */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Open Positions */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <span className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></span>
+                Open Positions
+              </h2>
+              <span className="text-sm text-gray-500">{openPositions.length} active</span>
+            </div>
+            
+            {openPositions.length === 0 ? (
+              <div className="bg-poly-card border border-poly-border rounded-xl p-8 text-center text-gray-500">
+                <div className="text-4xl mb-2">📊</div>
+                <div>No open positions</div>
+                <div className="text-sm">Waiting for opportunities...</div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {openPositions.map(pos => (
+                  <PositionCard key={pos.id} position={pos} isOpen={true} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Closed Positions */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Recent Results</h2>
+              <span className="text-sm text-gray-500">{closedPositions.length} shown</span>
+            </div>
+            
+            {closedPositions.length === 0 ? (
+              <div className="bg-poly-card border border-poly-border rounded-xl p-8 text-center text-gray-500">
+                <div className="text-4xl mb-2">⏳</div>
+                <div>No completed bets yet</div>
+                <div className="text-sm">Results will appear here</div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {closedPositions.map(pos => (
+                  <PositionCard key={pos.id} position={pos} isOpen={false} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="mt-8 text-center text-gray-600 text-sm">
+          <div>🎲 Simulation Mode — No real money at risk</div>
+          <div className="mt-1">Polymarket 15-minute crypto markets • Auto-refresh every 5s</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App

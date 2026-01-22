@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+:root {
+  font-family: 'JetBrains Mono', monospace;
+  background-color: #0D1117;
+  color: #E6EDF3;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Custom colors */
+.text-poly-green { color: #00D395; }
+.text-poly-red { color: #FF6B6B; }
+.bg-poly-dark { background-color: #0D1117; }
+.bg-poly-card { background-color: #161B22; }
+.border-poly-border { border-color: #30363D; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #161B22;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363D;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484F58;
+}
+
+/* Animations */
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 211, 149, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(0, 211, 149, 0); }
+}
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(255, 107, 107, 0); }
+}
+
+.pulse-green {
+  animation: pulse-green 2s infinite;
+}
+
+.pulse-red {
+  animation: pulse-red 2s infinite;
+}
+
+/* Glowing effects */
+.glow-green {
+  text-shadow: 0 0 10px rgba(0, 211, 149, 0.5);
+}
+
+.glow-red {
+  text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
+}
