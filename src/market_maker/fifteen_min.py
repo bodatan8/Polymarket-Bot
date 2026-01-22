@@ -1,20 +1,41 @@
 """
-15-Minute Crypto Market Maker Bot - Mathematically Sound Prediction Model
+15-Minute Crypto Market Maker Bot - Full Stack Trading System
 
-Uses proper Expected Value calculation, volume-weighted signals, 
-realistic resolution, and risk management.
+Integrates:
+- Real-time Binance WebSocket for sub-second price data
+- Dynamic edge calculation based on time/probability
+- Self-learning timing optimizer with Thompson Sampling
+- Multi-signal aggregation (momentum, volume, order book, mean reversion)
+- Professional risk management with Kelly sizing
 """
 import asyncio
-import aiohttp
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from dataclasses import dataclass
-from collections import deque
+from typing import Optional
 
-from src.database import Position, add_position, resolve_position, get_open_positions, get_stats, reset_db
+import aiohttp
+
+from src.database import (
+    Position, add_position, resolve_position, get_open_positions, get_stats, reset_db,
+    record_signal_prediction, resolve_signal_predictions, get_signal_accuracy,
+    record_probability_prediction, resolve_probability_prediction, get_probability_calibration
+)
 from src.utils.logger import get_logger
+
+# Signal processing components
+from src.signals.price_feed import RealTimePriceFeed, MomentumData
+from src.signals.volume_detector import VolumeDetector
+from src.signals.aggregator import SignalAggregator, AggregatedSignal
+
+# Prediction and learning components
+from src.prediction.dynamic_edge import DynamicEdgeCalculator
+from src.prediction.calibrator import ProbabilityCalibrator
+from src.learning.timing_optimizer import TimingOptimizer
+
+# Risk management
+from src.risk.manager import RiskManager, RiskLimits, RiskLevel
 
 logger = get_logger("market_maker")
 
@@ -37,29 +58,9 @@ COINGECKO_IDS = {
     "XRP": "ripple",
 }
 
-# === MATHEMATICALLY SOUND CONFIG ===
+# === CONFIGURATION ===
 BET_SIZE_USD = 10.0
-MIN_EV_THRESHOLD = 0.005  # Minimum 0.5% expected value (aggressive for simulation)
-MIN_VOLUME = 100  # Minimum market volume in USD (low for new markets)
-MAX_VIG_ACCEPTABLE = 0.15  # Max 15% vig
-
-# Risk Management
-MAX_DAILY_LOSS = 50.0  # Stop trading if down $50
-MAX_OPEN_POSITIONS = 2  # Limit concurrent positions (correlation risk)
-MAX_POSITION_PER_ASSET = 1  # One bet per asset at a time
-
-# Kelly & Sizing
-KELLY_FRACTION = 0.10  # Conservative 10% Kelly
-MIN_DATA_POINTS = 1  # Allow betting immediately (simulation)
-
-
-@dataclass
-class PriceSnapshot:
-    """Point-in-time price snapshot for tracking."""
-    timestamp: float
-    up_price: float
-    down_price: float
-    crypto_price: float  # Live underlying price
+CYCLE_INTERVAL = 15  # seconds between cycles
 
 
 @dataclass
@@ -80,313 +81,129 @@ class FifteenMinMarket:
     is_active: bool
 
 
-class PriceTracker:
+class FullStackMarketMaker:
     """
-    Tracks live crypto prices for realistic resolution.
-    Records price at bet entry and compares to price at resolution.
+    Full-stack market maker with professional-grade components.
+    
+    Architecture:
+    ┌─────────────────────────────────────────────────────────┐
+    │  Data Layer (Speed)                                     │
+    │  - Binance WebSocket: Sub-second price updates          │
+    │  - Volume Detector: Anomaly detection                   │
+    └─────────────────────────────────────────────────────────┘
+                              ↓
+    ┌─────────────────────────────────────────────────────────┐
+    │  Signal Layer (Intelligence)                            │
+    │  - Signal Aggregator: Multi-factor predictions          │
+    │  - Momentum, Volume, Order Book, Mean Reversion         │
+    └─────────────────────────────────────────────────────────┘
+                              ↓
+    ┌─────────────────────────────────────────────────────────┐
+    │  Prediction Layer (Models)                              │
+    │  - Dynamic Edge Calculator: Time/probability-based      │
+    │  - Timing Optimizer: Self-learning with Thompson        │
+    └─────────────────────────────────────────────────────────┘
+                              ↓
+    ┌─────────────────────────────────────────────────────────┐
+    │  Execution Layer (Risk)                                 │
+    │  - Risk Manager: Kelly sizing, limits, correlation      │
+    │  - Position tracking and resolution                     │
+    └─────────────────────────────────────────────────────────┘
     """
-    
-    def __init__(self, max_history: int = 100):
-        self.history: dict[str, deque[PriceSnapshot]] = {}
-        self.max_history = max_history
-        self.entry_prices: dict[int, float] = {}  # position_id -> entry crypto price
-    
-    def add_snapshot(self, asset: str, up_price: float, down_price: float, crypto_price: float):
-        """Add a price snapshot."""
-        if asset not in self.history:
-            self.history[asset] = deque(maxlen=self.max_history)
-        
-        self.history[asset].append(PriceSnapshot(
-            timestamp=time.time(),
-            up_price=up_price,
-            down_price=down_price,
-            crypto_price=crypto_price
-        ))
-    
-    def record_entry_price(self, position_id: int, crypto_price: float):
-        """Record the crypto price at bet entry."""
-        self.entry_prices[position_id] = crypto_price
-    
-    def get_entry_price(self, position_id: int) -> Optional[float]:
-        """Get the recorded entry price for a position."""
-        return self.entry_prices.get(position_id)
-    
-    def get_latest_price(self, asset: str) -> Optional[float]:
-        """Get the latest crypto price for an asset."""
-        if asset not in self.history or not self.history[asset]:
-            return None
-        return self.history[asset][-1].crypto_price
-    
-    def get_data_points(self, asset: str) -> int:
-        """Get number of data points for an asset."""
-        return len(self.history.get(asset, []))
-    
-    def get_price_change(self, asset: str, lookback_seconds: int = 300) -> Optional[float]:
-        """
-        Calculate price change percentage over lookback period.
-        Returns percentage change (e.g., 0.02 for 2% increase).
-        """
-        if asset not in self.history or len(self.history[asset]) < 2:
-            return None
-        
-        snapshots = list(self.history[asset])
-        current = snapshots[-1]
-        cutoff = current.timestamp - lookback_seconds
-        
-        # Find oldest snapshot within lookback
-        oldest = None
-        for snap in snapshots:
-            if snap.timestamp >= cutoff:
-                oldest = snap
-                break
-        
-        if not oldest or oldest == current or oldest.crypto_price <= 0:
-            return None
-        
-        return (current.crypto_price - oldest.crypto_price) / oldest.crypto_price
-
-
-class MathematicalPredictionEngine:
-    """
-    Prediction engine with proper mathematical foundations.
-    
-    Core Principles:
-    1. Expected Value (EV) must be positive: EV = p*profit - (1-p)*loss
-    2. Volume indicates signal quality
-    3. Mean reversion in short-term binary markets
-    4. Conservative Kelly with uncertainty adjustment
-    """
-    
-    def __init__(self):
-        self.price_tracker = PriceTracker()
-    
-    def calculate_vig(self, up_price: float, down_price: float) -> float:
-        """Calculate the vig/overround (house edge)."""
-        return (up_price + down_price) - 1.0
-    
-    def calculate_fair_probability(self, up_price: float, down_price: float) -> tuple[float, float]:
-        """
-        Remove vig to get implied fair probabilities.
-        
-        If Up=0.52 and Down=0.54 (total=1.06), vig is 6%.
-        Fair: Up=0.52/1.06≈0.49, Down=0.54/1.06≈0.51
-        """
-        total = up_price + down_price
-        if total <= 0:
-            return 0.5, 0.5
-        
-        fair_up = up_price / total
-        fair_down = down_price / total
-        return fair_up, fair_down
-    
-    def calculate_expected_value(self, entry_price: float, true_prob: float) -> float:
-        """
-        Calculate proper Expected Value.
-        
-        EV = (prob_win * profit_if_win) - (prob_lose * loss_if_lose)
-        
-        If we pay 0.45 for a share worth $1 if win:
-        - Profit if win = 1.00 - 0.45 = 0.55
-        - Loss if lose = 0.45
-        - EV = (p * 0.55) - ((1-p) * 0.45)
-        
-        For EV > 0, we need: p > entry_price
-        """
-        profit_if_win = 1.0 - entry_price
-        loss_if_lose = entry_price
-        ev = (true_prob * profit_if_win) - ((1 - true_prob) * loss_if_lose)
-        return ev
-    
-    def estimate_true_probability(
-        self,
-        market: FifteenMinMarket,
-        price_change: Optional[float]
-    ) -> tuple[float, float, str]:
-        """
-        Estimate true probability using volume-weighted signals and mean reversion.
-        
-        Key insights:
-        1. High volume = informed traders, trust market price more
-        2. Low volume = noise, mean reversion likely
-        3. Extreme prices (far from 0.50) tend to revert
-        
-        Returns: (true_up_prob, true_down_prob, reasoning)
-        """
-        fair_up, fair_down = self.calculate_fair_probability(market.up_price, market.down_price)
-        
-        # Volume weight: higher volume = more confident in market price
-        # Low volume markets are noisier
-        volume_weight = min(1.0, market.volume / 5000)  # Full weight at $5k volume
-        
-        # Mean reversion factor: extreme prices tend to revert
-        # If up_price is 0.70, that's far from 0.50, expect some reversion
-        up_deviation = abs(market.up_price - 0.5)
-        down_deviation = abs(market.down_price - 0.5)
-        
-        # Start with fair probability as base
-        true_up = fair_up
-        true_down = fair_down
-        
-        reasoning_parts = []
-        
-        # Mean reversion: 15-min binary markets tend to oscillate around 50%
-        # If price deviates significantly, expect some reversion
-        if market.up_price > 0.52:
-            # Market thinks Up is likely - but consider fading if no strong signal
-            reversion_factor = (market.up_price - 0.50) * 0.3 * (1 - volume_weight)
-            true_up -= reversion_factor
-            true_down += reversion_factor
-            if reversion_factor > 0.01:
-                reasoning_parts.append(f"Mean reversion: fade Up {reversion_factor*100:.1f}%")
-        elif market.up_price < 0.48:
-            # Market thinks Down is likely - consider fading
-            reversion_factor = (0.50 - market.up_price) * 0.3 * (1 - volume_weight)
-            true_up += reversion_factor
-            true_down -= reversion_factor
-            if reversion_factor > 0.01:
-                reasoning_parts.append(f"Mean reversion: fade Down {reversion_factor*100:.1f}%")
-        
-        # Price momentum adjustment (if we have data)
-        if price_change is not None:
-            # If crypto price is rising, Up is more likely
-            # Weight by recent magnitude
-            momentum_signal = price_change * 0.5  # Conservative: 1% price move = 0.5% prob adjustment
-            
-            true_up += momentum_signal
-            true_down -= momentum_signal
-            
-            if abs(price_change) > 0.001:
-                direction = "rising" if price_change > 0 else "falling"
-                reasoning_parts.append(f"Price {direction} {abs(price_change)*100:.2f}%")
-        
-        # Normalize and bound
-        total = true_up + true_down
-        if total > 0:
-            true_up /= total
-            true_down /= total
-        
-        # Bound to reasonable range (no extreme certainty)
-        true_up = max(0.2, min(0.8, true_up))
-        true_down = max(0.2, min(0.8, true_down))
-        
-        reasoning = "; ".join(reasoning_parts) if reasoning_parts else "Market price trusted"
-        
-        return true_up, true_down, reasoning
-    
-    def calculate_bet_size(
-        self,
-        base_size: float,
-        ev: float,
-        time_to_expiry: float,
-        data_points: int
-    ) -> float:
-        """
-        Calculate bet size with proper Kelly and adjustments.
-        
-        Adjustments:
-        1. Kelly fraction (very conservative 5%)
-        2. Time decay (less time = smaller bet)
-        3. Uncertainty (fewer data points = smaller bet)
-        """
-        if ev <= 0:
-            return 0
-        
-        # Time factor: full size if 10+ min left, scales down
-        time_factor = min(1.0, max(0.3, time_to_expiry / 600))
-        
-        # Uncertainty factor: need data points for confidence
-        uncertainty_factor = min(1.0, data_points / MIN_DATA_POINTS)
-        
-        # EV-based sizing (higher EV = larger bet, capped)
-        ev_factor = min(1.0, ev / 0.10)  # Full size at 10% EV
-        
-        # Combined sizing
-        size = base_size * KELLY_FRACTION * time_factor * uncertainty_factor * ev_factor
-        
-        # Minimum and maximum bounds
-        return max(1.0, min(base_size, size))
-    
-    def evaluate_bet(
-        self,
-        market: FifteenMinMarket,
-        time_to_expiry: float,
-        data_points: int
-    ) -> tuple[Optional[str], float, float, float, str]:
-        """
-        Evaluate if a bet should be placed using proper EV calculation.
-        
-        Returns:
-            (side, ev, true_prob, bet_size, reason)
-            side is None if no bet should be placed
-        """
-        # Check vig
-        vig = self.calculate_vig(market.up_price, market.down_price)
-        if vig > MAX_VIG_ACCEPTABLE:
-            return None, 0, 0, 0, f"Vig too high: {vig*100:.1f}%"
-        
-        # Check volume
-        if market.volume < MIN_VOLUME:
-            return None, 0, 0, 0, f"Volume too low: ${market.volume:.0f}"
-        
-        # Get price change for momentum signal
-        price_change = self.price_tracker.get_price_change(market.asset, lookback_seconds=120)
-        
-        # Estimate true probabilities
-        true_up, true_down, reasoning = self.estimate_true_probability(market, price_change)
-        
-        # Calculate EV for each side
-        up_ev = self.calculate_expected_value(market.up_price, true_up)
-        down_ev = self.calculate_expected_value(market.down_price, true_down)
-        
-        # Find best side with positive EV
-        best_side = None
-        best_ev = 0
-        best_prob = 0
-        best_price = 0
-        
-        if up_ev > down_ev and up_ev > MIN_EV_THRESHOLD:
-            best_side = "Up"
-            best_ev = up_ev
-            best_prob = true_up
-            best_price = market.up_price
-        elif down_ev > up_ev and down_ev > MIN_EV_THRESHOLD:
-            best_side = "Down"
-            best_ev = down_ev
-            best_prob = true_down
-            best_price = market.down_price
-        
-        if not best_side:
-            return None, 0, 0, 0, f"No +EV bet (Up: {up_ev*100:+.1f}%, Down: {down_ev*100:+.1f}%)"
-        
-        # Calculate bet size
-        bet_size = self.calculate_bet_size(BET_SIZE_USD, best_ev, time_to_expiry, data_points)
-        
-        full_reason = f"EV: {best_ev*100:+.1f}% | P(win): {best_prob*100:.0f}% | {reasoning}"
-        
-        return best_side, best_ev, best_prob, bet_size, full_reason
-
-
-class FifteenMinMarketMaker:
-    """Market maker for 15-minute crypto markets with proper math."""
     
     def __init__(self, bet_size: float = BET_SIZE_USD):
         self.bet_size = bet_size
         self.session: Optional[aiohttp.ClientSession] = None
         self._running = False
-        self.prediction_engine = MathematicalPredictionEngine()
+        
+        # Initialize full-stack components
+        self.price_feed = RealTimePriceFeed()
+        self.volume_detector = VolumeDetector()
+        self.signal_aggregator = SignalAggregator(
+            price_feed=self.price_feed,
+            volume_detector=self.volume_detector
+        )
+        self.edge_calculator = DynamicEdgeCalculator()
+        self.timing_optimizer = TimingOptimizer()
+        self.calibrator = ProbabilityCalibrator()  # NEW: Probability calibration
+        self.risk_manager = RiskManager(
+            limits=RiskLimits(
+                max_daily_loss=100.0,
+                max_drawdown_percent=25.0,
+                max_position_size=50.0,
+                min_position_size=1.0,
+                max_total_exposure=500.0,
+                max_positions_per_asset=2,
+                max_open_positions=8,
+                max_correlation_exposure=0.7,
+                stop_loss_percent=50.0
+            ),
+            risk_level=RiskLevel.MODERATE
+        )
+        
+        # Entry price tracking for resolution
+        self._entry_prices: dict[int, float] = {}  # position_id -> crypto price at entry
+        
+        # Signal tracking for learning feedback loop
+        # Stores: position_id -> (individual_signals, predicted_prob, side)
+        self._position_signals: dict[int, tuple] = {}
+        
+        # Binance WebSocket task
+        self._ws_task: Optional[asyncio.Task] = None
         
     async def start(self):
-        """Start the market maker."""
+        """Start the market maker with all components."""
         self.session = aiohttp.ClientSession()
         self._running = True
-        logger.info("Market maker started")
+        
+        # Start Binance WebSocket in background
+        self._ws_task = asyncio.create_task(self._run_price_feed())
+        
+        logger.info("Full-stack market maker started")
+        logger.info("=" * 70)
+        logger.info("  FULL-STACK 15-MIN MARKET MAKER")
+        logger.info("=" * 70)
+        logger.info("  Components:")
+        logger.info("    ✓ Binance WebSocket (sub-second prices)")
+        logger.info("    ✓ Volume Anomaly Detector")
+        logger.info("    ✓ Multi-Signal Aggregator (momentum-focused)")
+        logger.info("    ✓ Dynamic Edge Calculator")
+        logger.info("    ✓ Probability Calibrator (self-correcting)")
+        logger.info("    ✓ Thompson Sampling Timing Optimizer")
+        logger.info("    ✓ Professional Risk Manager")
+        logger.info("  Learning Loops:")
+        logger.info("    ✓ Signal accuracy tracking → weight adjustment")
+        logger.info("    ✓ Probability calibration → prediction correction")
+        logger.info("    ✓ Timing bucket learning → entry optimization")
+        logger.info("=" * 70)
         
     async def stop(self):
         """Stop the market maker."""
         self._running = False
+        
+        # Stop WebSocket
+        if self._ws_task:
+            self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except asyncio.CancelledError:
+                pass
+        
+        await self.price_feed.stop()
+        
         if self.session:
             await self.session.close()
+        
         logger.info("Market maker stopped")
+    
+    async def _run_price_feed(self):
+        """Run Binance WebSocket in background."""
+        try:
+            await self.price_feed.connect()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Price feed error: {e}")
     
     def _get_current_and_future_timestamps(self) -> list[int]:
         """Get timestamps for current and upcoming 15-min windows."""
@@ -400,8 +217,25 @@ class FifteenMinMarketMaker:
         return timestamps
     
     async def fetch_crypto_prices(self) -> dict[str, float]:
-        """Fetch live crypto prices from multiple sources."""
-        # Try CoinGecko first
+        """
+        Fetch live crypto prices.
+        
+        Priority:
+        1. Real-time from Binance WebSocket (if connected)
+        2. CoinGecko API
+        3. Binance REST API
+        """
+        # Try WebSocket prices first (most up-to-date)
+        if self.price_feed.is_connected():
+            ws_prices = {}
+            for asset in ASSETS:
+                price = self.price_feed.get_latest_price(asset)
+                if price and price > 0:
+                    ws_prices[asset] = price
+            if len(ws_prices) >= len(ASSETS) - 1:  # Allow 1 missing
+                return ws_prices
+        
+        # Fallback to CoinGecko
         try:
             ids = ",".join(COINGECKO_IDS.values())
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd"
@@ -418,7 +252,7 @@ class FifteenMinMarketMaker:
         except Exception as e:
             logger.debug(f"CoinGecko failed: {e}")
         
-        # Fallback: Use Binance API
+        # Last resort: Binance REST
         try:
             binance_symbols = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT", "XRP": "XRPUSDT"}
             prices = {}
@@ -435,8 +269,7 @@ class FifteenMinMarketMaker:
         except Exception as e:
             logger.debug(f"Binance failed: {e}")
         
-        # Last resort: Use cached/estimated prices
-        logger.warning("Using estimated prices (API unavailable)")
+        logger.warning("Using estimated prices (all APIs unavailable)")
         return {"BTC": 88000, "ETH": 2900, "SOL": 130, "XRP": 2.0}
     
     async def fetch_market_by_slug(self, slug: str) -> Optional[FifteenMinMarket]:
@@ -523,24 +356,127 @@ class FifteenMinMarketMaker:
             if isinstance(result, FifteenMinMarket) and result.is_active:
                 markets.append(result)
         
-        logger.info(f"Found {len(markets)} active 15-minute markets")
         return markets
+    
+    def calculate_vig(self, up_price: float, down_price: float) -> float:
+        """Calculate the vig/overround."""
+        return (up_price + down_price) - 1.0
+    
+    def estimate_edge(
+        self, 
+        market: FifteenMinMarket,
+        aggregated_signal: AggregatedSignal,
+        momentum: Optional[MomentumData]
+    ) -> tuple[str, float, float, str]:
+        """
+        Estimate edge using aggregated signals with calibration.
+        
+        The key insight: For 15-min crypto markets, momentum is THE signal.
+        We estimate probability based on:
+        1. Market price (what others think) - baseline
+        2. Signal strength (our momentum-based adjustment)
+        3. Calibration (historical accuracy correction)
+        
+        Returns: (side, edge, true_probability, reasoning)
+        """
+        # Get fair probabilities (remove vig)
+        total = market.up_price + market.down_price
+        fair_up = market.up_price / total if total > 0 else 0.5
+        fair_down = market.down_price / total if total > 0 else 0.5
+        
+        # === MOMENTUM-BASED PROBABILITY ESTIMATION ===
+        # The aggregated signal is momentum-focused (70% weight)
+        # Stronger momentum = higher probability of continuation
+        
+        prob_adjustment = aggregated_signal.probability_adjustment
+        
+        # Scale adjustment by signal confidence
+        # High confidence + strong signal = bigger adjustment
+        adjusted_prob_shift = prob_adjustment * (0.5 + aggregated_signal.confidence * 0.5)
+        
+        # Calculate raw predicted probabilities
+        raw_up = fair_up + adjusted_prob_shift
+        raw_down = fair_down - adjusted_prob_shift
+        
+        # Bound probabilities
+        raw_up = max(0.30, min(0.85, raw_up))
+        raw_down = max(0.30, min(0.85, raw_down))
+        
+        # === APPLY CALIBRATION ===
+        # Use historical accuracy to correct our predictions
+        # If we're overconfident at 65%, calibration will pull us down
+        
+        # Calibrate the probability we'll actually use
+        if raw_up > raw_down:
+            calibration = self.calibrator.calibrate(raw_up)
+            true_up = calibration.calibrated_prob
+            true_down = 1 - true_up
+            calibration_note = f"Cal: {calibration.bucket}"
+        else:
+            calibration = self.calibrator.calibrate(raw_down)
+            true_down = calibration.calibrated_prob
+            true_up = 1 - true_down
+            calibration_note = f"Cal: {calibration.bucket}"
+        
+        # If calibrator has low confidence (few samples), blend toward raw
+        if calibration.confidence < 0.5:
+            blend = calibration.confidence
+            true_up = raw_up * (1 - blend) + true_up * blend
+            true_down = raw_down * (1 - blend) + true_down * blend
+            calibration_note = "Cal: learning"
+        
+        # === CALCULATE EXPECTED VALUE ===
+        # EV = p * profit_if_win - (1-p) * loss_if_lose
+        up_ev = true_up * (1 - market.up_price) - (1 - true_up) * market.up_price
+        down_ev = true_down * (1 - market.down_price) - (1 - true_down) * market.down_price
+        
+        # Choose best side
+        if up_ev > down_ev:
+            side = "Up"
+            edge = up_ev
+            true_prob = true_up
+        else:
+            side = "Down"
+            edge = down_ev
+            true_prob = true_down
+        
+        # Build reasoning
+        signal_dir = aggregated_signal.direction.value
+        signal_str = aggregated_signal.strength
+        momentum_str = ""
+        if momentum:
+            momentum_str = f" | Mom: {momentum.trend_strength*100:+.2f}%"
+        
+        reasoning = (
+            f"Signal: {signal_dir} ({signal_str:.0%}){momentum_str} | "
+            f"{calibration_note} | "
+            f"{aggregated_signal.reasoning}"
+        )
+        
+        return side, edge, true_prob, reasoning
     
     async def place_simulated_bet(
         self, 
         market: FifteenMinMarket, 
         side: str, 
         amount_usd: float,
-        ev: float,
+        edge: float,
         true_prob: float,
-        crypto_price: float
+        crypto_price: float,
+        time_left: float,
+        signal_strength: float,
+        reasoning: str,
+        aggregated_signal: Optional[AggregatedSignal] = None
     ) -> Optional[int]:
-        """Place a simulated bet and record entry price."""
+        """Place a simulated bet and record entry price with full reasoning."""
         entry_price = market.up_price if side == "Up" else market.down_price
         shares = amount_usd / entry_price
         
         # Calculate expected profit if we win
         profit_if_win = shares * 1.0 - amount_usd
+        
+        # Get timing bucket
+        bucket = self.timing_optimizer.get_bucket(time_left)
         
         position = Position(
             id=None,
@@ -554,32 +490,66 @@ class FifteenMinMarketMaker:
             target_price=crypto_price,  # Store entry crypto price for resolution
             start_time=market.start_time.isoformat(),
             end_time=market.end_time.isoformat(),
-            status="open"
+            status="open",
+            # Trading decision metadata
+            edge=edge,
+            true_prob=true_prob,
+            signal_strength=signal_strength,
+            timing_bucket=bucket,
+            reasoning=reasoning
         )
         
         position_id = add_position(position)
         
-        # Record entry crypto price for realistic resolution
-        self.prediction_engine.price_tracker.record_entry_price(position_id, crypto_price)
+        # Record entry crypto price for resolution
+        self._entry_prices[position_id] = crypto_price
+        
+        # Store signals for learning feedback loop
+        if aggregated_signal:
+            self._position_signals[position_id] = (
+                aggregated_signal.individual_signals,
+                true_prob,
+                side
+            )
+            
+            # === RECORD TO DATABASE FOR HISTORICAL ANALYSIS ===
+            # Record each individual signal prediction
+            for signal in aggregated_signal.individual_signals:
+                if abs(signal.value) > 0.05:  # Only record non-neutral signals
+                    predicted_dir = "Up" if signal.value > 0 else "Down"
+                    record_signal_prediction(
+                        position_id=position_id,
+                        signal_name=signal.name,
+                        signal_value=signal.value,
+                        signal_confidence=signal.confidence,
+                        predicted_direction=predicted_dir,
+                        asset=market.asset,
+                        timing_bucket=bucket
+                    )
+            
+            # Record probability prediction for calibration analysis
+            prob_bucket = self.calibrator._get_bucket_name(true_prob)
+            record_probability_prediction(
+                position_id=position_id,
+                predicted_prob=true_prob,
+                prob_bucket=prob_bucket,
+                asset=market.asset
+            )
         
         logger.info(
             f"[BET] {market.asset} {side} | "
             f"${amount_usd:.2f} @ {entry_price*100:.1f}¢ | "
-            f"EV: {ev*100:+.1f}% | "
+            f"Edge: {edge*100:+.1f}% | "
             f"P(win): {true_prob*100:.0f}% | "
+            f"Bucket: {bucket} | "
             f"If Win: +${profit_if_win:.2f}"
         )
+        logger.info(f"   Reason: {reasoning}")
         
         return position_id
     
-    async def resolve_positions_realistically(self, crypto_prices: dict[str, float]):
-        """
-        Resolve positions using ACTUAL price comparison.
-        
-        This is the key fix: instead of random resolution based on our estimate,
-        we compare the entry crypto price vs current crypto price to determine
-        if Up or Down won.
-        """
+    async def resolve_positions(self, crypto_prices: dict[str, float]):
+        """Resolve positions using actual price comparison."""
         open_positions = get_open_positions()
         
         for pos in open_positions:
@@ -597,34 +567,89 @@ class FifteenMinMarketMaker:
                     asset = pos['asset']
                     side = pos['side']
                     
-                    # Get entry price (stored in target_price field)
-                    entry_crypto_price = pos.get('target_price', 0)
-                    
-                    # Get current price
+                    # Get entry price
+                    entry_crypto_price = pos.get('target_price', 0) or self._entry_prices.get(pos['id'], 0)
                     current_crypto_price = crypto_prices.get(asset, 0)
                     
                     if entry_crypto_price <= 0 or current_crypto_price <= 0:
                         logger.warning(f"Missing price data for position {pos['id']}")
                         continue
                     
-                    # Determine winner based on ACTUAL price movement
+                    # Determine winner based on actual price movement
                     price_went_up = current_crypto_price > entry_crypto_price
                     
-                    # Up wins if price went up, Down wins if price went down or stayed same
                     if side == "Up":
                         won = price_went_up
-                    else:  # Down
+                    else:
                         won = not price_went_up
                     
                     # Calculate P&L
                     if won:
-                        pnl = pos['shares'] - pos['amount_usd']  # Get $1/share - wagered
+                        pnl = pos['shares'] - pos['amount_usd']
                         exit_price = 1.0
                     else:
-                        pnl = -pos['amount_usd']  # Lose entire wager
+                        pnl = -pos['amount_usd']
                         exit_price = 0.0
                     
                     resolve_position(pos['id'], won, exit_price)
+                    
+                    # Update risk manager
+                    self.risk_manager.record_pnl(pnl)
+                    
+                    # === LEARNING FEEDBACK LOOPS ===
+                    
+                    # 1. Update signal aggregator with trade result
+                    # This teaches which signals are predictive
+                    if pos['id'] in self._position_signals:
+                        signals, predicted_prob, bet_side = self._position_signals[pos['id']]
+                        actual_direction = "Up" if price_went_up else "Down"
+                        self.signal_aggregator.record_trade_result(
+                            individual_signals=signals,
+                            won=won,
+                            pnl=pnl,
+                            actual_direction=actual_direction
+                        )
+                        del self._position_signals[pos['id']]
+                    
+                    # 2. Update probability calibrator
+                    # This corrects overconfidence/underconfidence
+                    predicted_prob = pos.get('true_prob', 0.5)
+                    if predicted_prob and predicted_prob > 0:
+                        self.calibrator.record_outcome(
+                            predicted_probability=predicted_prob,
+                            won=won,
+                            pnl=pnl
+                        )
+                    
+                    # 3. Update timing optimizer
+                    start_time_str = pos.get('start_time', '')
+                    try:
+                        if '+' in start_time_str or 'Z' in start_time_str:
+                            start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                        else:
+                            start_time = datetime.fromisoformat(start_time_str)
+                        
+                        # Use timing bucket from position if available
+                        timing_bucket = pos.get('timing_bucket', '')
+                        if timing_bucket:
+                            # Parse bucket to get approximate time
+                            bucket_times = {
+                                "1-2min": 90, "2-3min": 150, "3-5min": 240, "5-7min": 360
+                            }
+                            time_at_entry = bucket_times.get(timing_bucket, 180)
+                        else:
+                            # Calculate time left when bet was placed (approximate)
+                            time_at_entry = (end_time - start_time).total_seconds() / 2
+                        
+                        # Record for timing optimizer
+                        self.timing_optimizer.record_result(
+                            time_left_at_entry=time_at_entry,
+                            won=won,
+                            pnl=pnl,
+                            wagered=pos['amount_usd']
+                        )
+                    except:
+                        pass
                     
                     price_change = ((current_crypto_price - entry_crypto_price) / entry_crypto_price) * 100
                     result = "WON ✅" if won else "LOST ❌"
@@ -635,146 +660,205 @@ class FifteenMinMarketMaker:
                         f"P&L: ${pnl:+.2f}"
                     )
                     
+                    # Clean up entry price
+                    if pos['id'] in self._entry_prices:
+                        del self._entry_prices[pos['id']]
+                    
             except Exception as e:
                 logger.error(f"Error resolving position {pos['id']}: {e}")
     
     async def run_cycle(self):
-        """Run one market making cycle with all risk checks."""
+        """Run one market making cycle with full-stack analysis."""
         # Fetch live crypto prices
         crypto_prices = await self.fetch_crypto_prices()
         if not crypto_prices:
             logger.warning("Could not fetch crypto prices")
             return
         
-        # Resolve any expired positions using REAL price comparison
-        await self.resolve_positions_realistically(crypto_prices)
+        # Update volume detector with latest data
+        for asset, price in crypto_prices.items():
+            # Simulate volume from price feed if available
+            if self.price_feed.is_connected():
+                volume_rate = self.price_feed.get_volume_rate(asset, 60)
+                self.volume_detector.record_volume(asset, volume_rate)
         
-        # Check risk limits
-        stats = get_stats()
-        if stats['total_pnl'] < -MAX_DAILY_LOSS:
-            logger.warning(f"Daily loss limit reached (${stats['total_pnl']:.2f}). Stopping.")
-            return
+        # Resolve any expired positions
+        await self.resolve_positions(crypto_prices)
         
+        # Get current positions and stats
         open_positions = get_open_positions()
-        if len(open_positions) >= MAX_OPEN_POSITIONS:
-            logger.debug(f"Max open positions reached ({len(open_positions)})")
-            return
+        stats = get_stats()
         
-        # Track which sides we already have bets on (correlation risk)
-        existing_sides = {p['side'] for p in open_positions}
-        existing_assets = {p['asset'] for p in open_positions}
+        # Risk check: daily loss limit
+        risk_summary = self.risk_manager.get_risk_summary(open_positions, 1000)
         
         # Fetch markets
         markets = await self.fetch_15min_markets()
         
         if not markets:
-            logger.info("No active 15-minute markets found")
+            logger.debug("No active 15-minute markets found")
             return
         
-        # Update price tracker with current data
-        for asset, price in crypto_prices.items():
-            # Find corresponding market for this asset
-            for market in markets:
-                if market.asset == asset:
-                    self.prediction_engine.price_tracker.add_snapshot(
-                        asset, market.up_price, market.down_price, price
-                    )
-                    break
-        
-        logger.debug(f"Evaluating {len(markets)} markets...")
+        logger.info(f"Found {len(markets)} active markets | {len(open_positions)} open positions")
         
         # Evaluate each market
         for market in markets:
             now = datetime.now(timezone.utc)
             time_to_expiry = (market.end_time - now).total_seconds()
+            
+            # Skip if less than 1 minute or more than 7 minutes
+            # RATIONALE: Betting closer to expiry is more accurate because:
+            # - Short-term momentum is more predictive
+            # - Less time for random price swings
+            # - Market prices have converged to true probability
+            if time_to_expiry < 60 or time_to_expiry > 420:  # 1-7 minutes
+                continue
+            
+            # === TIMING OPTIMIZER ===
+            timing_decision = self.timing_optimizer.should_bet_now(time_to_expiry)
+            if not timing_decision.should_bet:
+                logger.debug(f"{market.asset}: {timing_decision.reasoning}")
+                continue
+            
+            # === VOLUME CHECK ===
+            can_trade, volume_reason = self.volume_detector.should_trade(market.asset)
+            # Don't block on volume in simulation, just log
+            if not can_trade:
+                logger.debug(f"{market.asset}: Volume warning - {volume_reason}")
+            
+            # === SIGNAL AGGREGATION ===
+            momentum = self.price_feed.get_momentum(market.asset) if self.price_feed.is_connected() else None
+            
+            aggregated_signal = self.signal_aggregator.aggregate(
+                asset=market.asset,
+                market_price=market.up_price,
+                best_bid=market.up_price - 0.01,
+                best_ask=market.up_price + 0.01,
+                momentum_data=momentum
+            )
+            
+            # === EDGE CALCULATION ===
+            side, estimated_edge, true_prob, reasoning = self.estimate_edge(
+                market, aggregated_signal, momentum
+            )
+            
+            # === DYNAMIC EDGE REQUIREMENT ===
+            edge_req = self.edge_calculator.calculate_required_edge(
+                time_left_seconds=time_to_expiry,
+                market_price=market.up_price if side == "Up" else market.down_price,
+                volume=market.volume,
+                momentum=momentum.trend_strength if momentum else None,
+                side=side
+            )
+            
+            vig = self.calculate_vig(market.up_price, market.down_price)
             mins_left = time_to_expiry / 60
             
-            # Skip if less than 1 minute to expiry
-            if time_to_expiry < 60:
-                continue
-            
-            # Skip if more than 25 minutes to expiry (allow entry at start of 15-min window)
-            if time_to_expiry > 1500:
-                continue
-            
-            # Check if we already have a position in this asset
-            if market.asset in existing_assets:
-                logger.debug(f"{market.asset}: Already have position")
-                continue
-            
-            # Get data points for uncertainty adjustment
-            data_points = self.prediction_engine.price_tracker.get_data_points(market.asset)
-            
-            mins_left = time_to_expiry / 60
-            vig = self.prediction_engine.calculate_vig(market.up_price, market.down_price)
-            
+            # Log market evaluation
             logger.info(
                 f"📊 {market.asset} | "
                 f"Up: {market.up_price*100:.1f}¢ Down: {market.down_price*100:.1f}¢ | "
                 f"Vol: ${market.volume:.0f} | Vig: {vig*100:.1f}% | "
-                f"{mins_left:.1f}m | Data: {data_points}"
+                f"{mins_left:.1f}m | "
+                f"Signal: {aggregated_signal.direction.value}"
             )
             
-            # Evaluate bet
-            side, ev, true_prob, bet_size, reason = self.prediction_engine.evaluate_bet(
-                market, time_to_expiry, data_points
-            )
-            
-            if not side:
-                logger.debug(f"   ❌ {market.asset}: {reason}")
+            # Check if edge meets requirement
+            if estimated_edge < edge_req.required_edge:
+                logger.debug(
+                    f"   ❌ Edge {estimated_edge*100:.1f}% < Required {edge_req.required_edge*100:.1f}% | "
+                    f"{edge_req.reasoning}"
+                )
                 continue
             
-            # Correlation check: don't bet same direction as existing positions
-            if side in existing_sides:
-                logger.debug(f"{market.asset}: Already have {side} position (correlation)")
-                continue
-            
-            # Get current crypto price for entry
+            # === RISK MANAGEMENT ===
             crypto_price = crypto_prices.get(market.asset, 0)
-            if crypto_price <= 0:
+            
+            risk_check = self.risk_manager.can_take_position(
+                asset=market.asset,
+                side=side,
+                proposed_size=self.bet_size,
+                edge=estimated_edge,
+                confidence=aggregated_signal.confidence,
+                current_positions=open_positions,
+                bankroll=1000.0
+            )
+            
+            if not risk_check.allowed:
+                logger.info(f"   ❌ Risk blocked: {risk_check.reason}")
                 continue
             
-            logger.info(f"   ✅ {reason}")
+            # Use risk-adjusted size
+            bet_size = risk_check.adjusted_size
             
-            await self.place_simulated_bet(market, side, bet_size, ev, true_prob, crypto_price)
+            if bet_size < 1.0:
+                logger.debug(f"   ❌ Bet size too small: ${bet_size:.2f}")
+                continue
             
-            # Update existing sides for correlation check
-            existing_sides.add(side)
-            existing_assets.add(market.asset)
+            # === PLACE BET ===
+            # Build comprehensive reasoning
+            full_reasoning = (
+                f"{reasoning} | "
+                f"Edge: {estimated_edge*100:+.1f}% > Req: {edge_req.required_edge*100:.1f}% | "
+                f"Timing: {timing_decision.bucket} ({timing_decision.sampled_win_rate*100:.0f}% sampled WR) | "
+                f"Vig: {vig*100:.1f}% | "
+                f"Vol: ${market.volume:.0f}"
+            )
+            
+            logger.info(
+                f"   ✅ {reasoning} | "
+                f"Edge: {estimated_edge*100:+.1f}% > Req: {edge_req.required_edge*100:.1f}% | "
+                f"Size: ${bet_size:.2f}"
+            )
+            
+            await self.place_simulated_bet(
+                market=market,
+                side=side,
+                amount_usd=bet_size,
+                edge=estimated_edge,
+                true_prob=true_prob,
+                crypto_price=crypto_price,
+                time_left=time_to_expiry,
+                signal_strength=aggregated_signal.strength,
+                reasoning=full_reasoning,
+                aggregated_signal=aggregated_signal  # For learning feedback
+            )
+            
+            # Refresh positions for correlation check
+            open_positions = get_open_positions()
         
         # Log stats
         stats = get_stats()
         if stats['total_bets'] > 0:
             roi = (stats['total_pnl'] / stats['total_wagered'] * 100) if stats['total_wagered'] > 0 else 0
+            
+            # Get timing summary
+            timing_summary = self.timing_optimizer.get_summary()
+            best_bucket, best_roi = self.timing_optimizer.get_best_bucket()
+            
             logger.info(
                 f"📈 STATS: {stats['total_bets']} bets | "
                 f"{stats['wins']}W/{stats['losses']}L ({stats['win_rate']:.1f}%) | "
                 f"P&L: ${stats['total_pnl']:+.2f} | "
-                f"ROI: {roi:+.1f}%"
+                f"ROI: {roi:+.1f}% | "
+                f"Best Bucket: {best_bucket}"
             )
     
-    async def run(self, interval_seconds: int = 20):
+    async def run(self, interval_seconds: int = CYCLE_INTERVAL):
         """Run the market maker continuously."""
-        logger.info("=" * 70)
-        logger.info("  MATHEMATICALLY SOUND 15-MIN MARKET MAKER")
-        logger.info("=" * 70)
-        logger.info(f"  Assets: BTC, ETH, SOL, XRP")
-        logger.info(f"  Base Bet Size: ${self.bet_size:.2f}")
-        logger.info(f"  Min EV Threshold: {MIN_EV_THRESHOLD*100:.0f}%")
-        logger.info(f"  Min Volume: ${MIN_VOLUME}")
-        logger.info(f"  Max Vig: {MAX_VIG_ACCEPTABLE*100:.0f}%")
-        logger.info(f"  Kelly Fraction: {KELLY_FRACTION*100:.0f}%")
-        logger.info(f"  Max Daily Loss: ${MAX_DAILY_LOSS}")
-        logger.info(f"  Max Open Positions: {MAX_OPEN_POSITIONS}")
-        logger.info("=" * 70)
-        
         while self._running:
             try:
                 await self.run_cycle()
             except Exception as e:
                 logger.error(f"Error in market maker cycle: {e}")
+                import traceback
+                traceback.print_exc()
             
             await asyncio.sleep(interval_seconds)
+
+
+# Keep backward compatibility with old class name
+FifteenMinMarketMaker = FullStackMarketMaker
 
 
 async def main():
@@ -786,11 +870,11 @@ async def main():
     logger.info("Resetting database for fresh simulation...")
     reset_db()
     
-    maker = FifteenMinMarketMaker(bet_size=10.0)
+    maker = FullStackMarketMaker(bet_size=10.0)
     await maker.start()
     
     try:
-        await maker.run(interval_seconds=20)
+        await maker.run(interval_seconds=CYCLE_INTERVAL)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     finally:

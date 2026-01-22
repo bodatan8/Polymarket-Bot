@@ -26,7 +26,6 @@ interface Position {
   pnl: number | null
   resolved_at: string | null
   created_at: string
-  // Live data
   current_price?: number
   current_up_price?: number
   current_down_price?: number
@@ -34,6 +33,12 @@ interface Position {
   win_odds?: number
   potential_profit?: number
   unrealized_pnl?: number
+  // Trading decision metadata
+  edge?: number
+  true_prob?: number
+  signal_strength?: number
+  timing_bucket?: string
+  reasoning?: string
 }
 
 interface CryptoPrices {
@@ -43,11 +48,40 @@ interface CryptoPrices {
   XRP: number
 }
 
+interface TimingBucket {
+  bets: number
+  wins: number
+  losses: number
+  win_rate: string
+  roi: string
+  pnl: string
+}
+
+interface TimingData {
+  buckets: Record<string, TimingBucket>
+  best_bucket: string
+  best_roi: string
+}
+
+interface RiskData {
+  daily_pnl: string
+  daily_limit_used: string
+  open_positions: number
+  max_positions: number
+  total_exposure: string
+  max_exposure: string
+  drawdown: string
+  max_drawdown: string
+  risk_level: string
+}
+
 interface DashboardData {
   stats: Stats
   open_positions: Position[]
   closed_positions: Position[]
   crypto_prices: CryptoPrices
+  timing: TimingData
+  risk: RiskData
   timestamp: string
 }
 
@@ -70,7 +104,7 @@ function StatCard({ label, value, subValue, color = 'white' }: { label: string; 
   )
 }
 
-function PriceCard({ asset, price, color }: { asset: string; price: number; color: string }) {
+function PriceCard({ asset, price }: { asset: string; price: number }) {
   const bgColors: Record<string, string> = {
     BTC: 'bg-orange-500/20 border-orange-500/50',
     ETH: 'bg-blue-500/20 border-blue-500/50',
@@ -97,6 +131,75 @@ function AssetIcon({ asset }: { asset: string }) {
   return (
     <div className={`w-10 h-10 rounded-full ${colors[asset] || 'bg-gray-600'} flex items-center justify-center text-xs font-bold`}>
       {asset}
+    </div>
+  )
+}
+
+function TimingBucketCard({ name, bucket }: { name: string; bucket: TimingBucket }) {
+  const roi = parseFloat(bucket.roi.replace('%', '').replace('+', ''))
+  const roiColor = roi > 0 ? 'text-poly-green' : roi < 0 ? 'text-poly-red' : 'text-gray-400'
+  
+  return (
+    <div className="bg-black/20 rounded-lg p-3">
+      <div className="text-xs text-gray-400 mb-1">{name}</div>
+      <div className="flex justify-between items-center">
+        <div className="text-sm font-mono">{bucket.bets} bets</div>
+        <div className={`text-sm font-mono font-bold ${roiColor}`}>{bucket.roi}</div>
+      </div>
+      <div className="text-xs text-gray-500 mt-1">{bucket.win_rate} WR</div>
+    </div>
+  )
+}
+
+function RiskIndicator({ risk }: { risk: RiskData }) {
+  const dailyUsed = parseFloat(risk.daily_limit_used.replace('%', ''))
+  const drawdown = parseFloat(risk.drawdown.replace('%', ''))
+  
+  const getColor = (pct: number) => {
+    if (pct < 30) return 'bg-poly-green'
+    if (pct < 60) return 'bg-yellow-500'
+    return 'bg-poly-red'
+  }
+
+  return (
+    <div className="bg-poly-card border border-poly-border rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-bold">Risk Status</div>
+        <div className={`text-xs px-2 py-1 rounded ${risk.risk_level === 'CONSERVATIVE' ? 'bg-green-500/20 text-green-400' : risk.risk_level === 'MODERATE' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+          {risk.risk_level}
+        </div>
+      </div>
+      
+      <div className="space-y-3">
+        <div>
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>Daily Loss</span>
+            <span>{risk.daily_pnl} / ${risk.max_drawdown}</span>
+          </div>
+          <div className="h-2 bg-black/30 rounded-full overflow-hidden">
+            <div className={`h-full ${getColor(dailyUsed)} transition-all`} style={{ width: `${Math.min(100, dailyUsed)}%` }} />
+          </div>
+        </div>
+        
+        <div>
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>Drawdown</span>
+            <span>{risk.drawdown}</span>
+          </div>
+          <div className="h-2 bg-black/30 rounded-full overflow-hidden">
+            <div className={`h-full ${getColor(drawdown * 4)} transition-all`} style={{ width: `${Math.min(100, drawdown * 4)}%` }} />
+          </div>
+        </div>
+        
+        <div className="flex justify-between text-xs pt-2 border-t border-poly-border/50">
+          <span className="text-gray-400">Positions</span>
+          <span className="font-mono">{risk.open_positions}/{risk.max_positions}</span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-gray-400">Exposure</span>
+          <span className="font-mono">{risk.total_exposure}</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -144,7 +247,7 @@ function PositionCard({ position, isOpen }: { position: Position; isOpen: boolea
         {isOpen && (
           <div className="text-right">
             <div className="text-2xl font-mono text-yellow-400">
-              ⏱ {getTimeRemaining(position.end_time)}
+              {getTimeRemaining(position.end_time)}
             </div>
           </div>
         )}
@@ -196,11 +299,45 @@ function PositionCard({ position, isOpen }: { position: Position; isOpen: boolea
           <div className="bg-black/20 rounded-lg p-2">
             <div className="text-gray-500 text-xs">Result</div>
             <div className={`font-mono font-bold ${position.pnl && position.pnl >= 0 ? 'text-poly-green' : 'text-poly-red'}`}>
-              {position.status === 'won' ? '✅ WON' : '❌ LOST'} {position.pnl && position.pnl >= 0 ? '+' : ''}${position.pnl?.toFixed(2)}
+              {position.status === 'won' ? 'WON' : 'LOST'} {position.pnl && position.pnl >= 0 ? '+' : ''}${position.pnl?.toFixed(2)}
             </div>
           </div>
         )}
       </div>
+      
+      {/* Trading Decision Info */}
+      {position.edge !== undefined && position.edge !== null && (
+        <div className="mt-3 pt-3 border-t border-poly-border/50">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-2">
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">Edge:</span>
+              <span className="font-mono text-poly-green">{(position.edge * 100).toFixed(1)}%</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">True Prob:</span>
+              <span className="font-mono">{((position.true_prob || 0) * 100).toFixed(0)}%</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">Signal:</span>
+              <span className="font-mono">{((position.signal_strength || 0) * 100).toFixed(0)}%</span>
+            </div>
+            {position.timing_bucket && (
+              <div className="flex items-center gap-1">
+                <span className="text-gray-500">Bucket:</span>
+                <span className="font-mono text-yellow-400">{position.timing_bucket}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {/* Reasoning */}
+      {position.reasoning && (
+        <div className="mt-2 p-2 bg-black/30 rounded-lg">
+          <div className="text-xs text-gray-400 mb-1">Why this bet:</div>
+          <div className="text-xs text-gray-300 leading-relaxed">{position.reasoning}</div>
+        </div>
+      )}
       
       {/* Live Crypto Price */}
       {isOpen && position.live_crypto_price !== undefined && position.live_crypto_price > 0 && (
@@ -252,7 +389,7 @@ function App() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 5000) // Refresh every 5 seconds
+    const interval = setInterval(fetchData, 5000)
     return () => clearInterval(interval)
   }, [])
 
@@ -267,7 +404,7 @@ function App() {
   if (error) {
     return (
       <div className="min-h-screen bg-poly-dark flex flex-col items-center justify-center gap-4">
-        <div className="text-2xl text-poly-red">⚠️ Connection Error</div>
+        <div className="text-2xl text-poly-red">Connection Error</div>
         <div className="text-gray-400">{error}</div>
         <div className="text-sm text-gray-500">API: {API_URL}</div>
         <button 
@@ -284,6 +421,10 @@ function App() {
   const openPositions = data?.open_positions || []
   const closedPositions = data?.closed_positions || []
   const cryptoPrices = data?.crypto_prices || { BTC: 0, ETH: 0, SOL: 0, XRP: 0 }
+  const timing = data?.timing
+  const risk = data?.risk
+
+  const roi = stats.total_wagered > 0 ? (stats.total_pnl / stats.total_wagered * 100) : 0
 
   return (
     <div className="min-h-screen bg-poly-dark p-4 md:p-6">
@@ -292,10 +433,10 @@ function App() {
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-3">
-              <span className="text-3xl md:text-4xl">₿</span>
-              15-Min Market Maker
+              <span className="text-3xl md:text-4xl">&#8383;</span>
+              Full-Stack Market Maker
             </h1>
-            <p className="text-gray-500 mt-1">Polymarket Crypto Simulation</p>
+            <p className="text-gray-500 mt-1">Polymarket 15-Min Crypto | Simulation Mode</p>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -308,14 +449,14 @@ function App() {
 
         {/* Live Crypto Prices */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <PriceCard asset="BTC" price={cryptoPrices.BTC} color="orange" />
-          <PriceCard asset="ETH" price={cryptoPrices.ETH} color="blue" />
-          <PriceCard asset="SOL" price={cryptoPrices.SOL} color="purple" />
-          <PriceCard asset="XRP" price={cryptoPrices.XRP} color="gray" />
+          <PriceCard asset="BTC" price={cryptoPrices.BTC} />
+          <PriceCard asset="ETH" price={cryptoPrices.ETH} />
+          <PriceCard asset="SOL" price={cryptoPrices.SOL} />
+          <PriceCard asset="XRP" price={cryptoPrices.XRP} />
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
           <StatCard 
             label="Total Bets" 
             value={stats.total_bets.toString()} 
@@ -342,6 +483,37 @@ function App() {
             subValue={`Wagered: $${stats.total_wagered.toFixed(2)}`}
             color={stats.total_pnl >= 0 ? 'green' : 'red'}
           />
+          <StatCard 
+            label="ROI" 
+            value={`${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`}
+            subValue={timing?.best_bucket ? `Best: ${timing.best_bucket}` : undefined}
+            color={roi >= 0 ? 'green' : 'red'}
+          />
+        </div>
+
+        {/* Timing & Risk Section */}
+        <div className="grid md:grid-cols-2 gap-6 mb-6">
+          {/* Timing Optimizer */}
+          {timing && (
+            <div className="bg-poly-card border border-poly-border rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-bold">Timing Optimizer (Thompson Sampling)</div>
+                {timing.best_bucket && (
+                  <div className="text-xs px-2 py-1 rounded bg-poly-green/20 text-poly-green">
+                    Best: {timing.best_bucket}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {Object.entries(timing.buckets).map(([name, bucket]) => (
+                  <TimingBucketCard key={name} name={name} bucket={bucket} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Risk Indicator */}
+          {risk && <RiskIndicator risk={risk} />}
         </div>
 
         {/* Positions */}
@@ -358,7 +530,7 @@ function App() {
             
             {openPositions.length === 0 ? (
               <div className="bg-poly-card border border-poly-border rounded-xl p-8 text-center text-gray-500">
-                <div className="text-4xl mb-2">📊</div>
+                <div className="text-4xl mb-2">&#128200;</div>
                 <div>No open positions</div>
                 <div className="text-sm">Waiting for opportunities...</div>
               </div>
@@ -380,7 +552,7 @@ function App() {
             
             {closedPositions.length === 0 ? (
               <div className="bg-poly-card border border-poly-border rounded-xl p-8 text-center text-gray-500">
-                <div className="text-4xl mb-2">⏳</div>
+                <div className="text-4xl mb-2">&#8987;</div>
                 <div>No completed bets yet</div>
                 <div className="text-sm">Results will appear here</div>
               </div>
@@ -396,8 +568,8 @@ function App() {
 
         {/* Footer */}
         <div className="mt-8 text-center text-gray-600 text-sm">
-          <div>🎲 Simulation Mode — No real money at risk</div>
-          <div className="mt-1">Polymarket 15-minute crypto markets • Auto-refresh every 5s</div>
+          <div>&#127922; Simulation Mode - No real money at risk</div>
+          <div className="mt-1">Full-Stack Trading System | Auto-refresh every 5s</div>
         </div>
       </div>
     </div>
