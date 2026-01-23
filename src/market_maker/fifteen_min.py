@@ -9,13 +9,13 @@ Integrates:
 - Professional risk management with Kelly sizing
 """
 import asyncio
+import aiohttp
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass
 from typing import Optional
-
-import aiohttp
+from dataclasses import dataclass
+from collections import deque
 
 from src.database import (
     Position, add_position, resolve_position, get_open_positions, get_stats, reset_db,
@@ -24,17 +24,13 @@ from src.database import (
 )
 from src.utils.logger import get_logger
 
-# Signal processing components
+# Import new full-stack components
 from src.signals.price_feed import RealTimePriceFeed, MomentumData
 from src.signals.volume_detector import VolumeDetector
 from src.signals.aggregator import SignalAggregator, AggregatedSignal
-
-# Prediction and learning components
 from src.prediction.dynamic_edge import DynamicEdgeCalculator
 from src.prediction.calibrator import ProbabilityCalibrator
 from src.learning.timing_optimizer import TimingOptimizer
-
-# Risk management
 from src.risk.manager import RiskManager, RiskLimits, RiskLevel
 
 logger = get_logger("market_maker")
@@ -175,6 +171,13 @@ class FullStackMarketMaker:
         logger.info("    ✓ Signal accuracy tracking → weight adjustment")
         logger.info("    ✓ Probability calibration → prediction correction")
         logger.info("    ✓ Timing bucket learning → entry optimization")
+        logger.info("  Aggressive Sizing:")
+        if AGGRESSIVE_SIZING_ENABLED:
+            logger.info(f"    ✓ ENABLED: {AGGRESSIVE_EDGE_THRESHOLD*100:.0f}%+ edge → up to {MAX_AGGRESSIVE_SIZE*100:.0f}% bankroll")
+            logger.info(f"    ✓ Base bankroll: ${BASE_BANKROLL:,.0f}")
+            logger.info(f"    ✓ Edge multiplier: {EDGE_MULTIPLIER}x")
+        else:
+            logger.info("    ✗ DISABLED: Using standard sizing only")
         logger.info("=" * 70)
         
     async def stop(self):
