@@ -65,8 +65,14 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-01-01' = {
+  name: '${storageAccount.name}/default'
+  properties: {}
+}
+
 resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: '${storageAccount.name}/default/polymarket-data'
+  parent: fileService
+  name: 'polymarket-data'
   properties: {
     shareQuota: 1
   }
@@ -115,7 +121,8 @@ resource marketMakerApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'data-volume'
           storageType: 'AzureFile'
-          storageName: 'polymarket-data'
+          storageName: fileShare.name
+          storageAccountName: storageAccount.name
         }
       ]
       scale: {
@@ -174,7 +181,8 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'data-volume'
           storageType: 'AzureFile'
-          storageName: 'polymarket-data'
+          storageName: fileShare.name
+          storageAccountName: storageAccount.name
         }
       ]
       scale: {

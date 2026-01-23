@@ -1,5 +1,6 @@
 """
 FastAPI server for the 15-minute market maker dashboard.
+Includes full-stack component data.
 """
 import asyncio
 import aiohttp
@@ -11,6 +12,8 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 from src.database import get_open_positions, get_closed_positions, get_all_positions, get_stats, reset_db
+from src.learning.timing_optimizer import TimingOptimizer
+from src.risk.manager import RiskManager, RiskLimits, RiskLevel
 
 app = FastAPI(title="15-Min Market Maker Dashboard API")
 
@@ -21,6 +24,21 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Initialize shared components
+timing_optimizer = TimingOptimizer()
+risk_manager = RiskManager(
+    limits=RiskLimits(
+        max_daily_loss=100.0,
+        max_drawdown_percent=25.0,
+        max_position_size=50.0,
+        min_position_size=1.0,
+        max_total_exposure=500.0,
+        max_positions_per_asset=2,
+        max_open_positions=8,
+    ),
+    risk_level=RiskLevel.MODERATE
 )
 
 # Gamma API for live prices
@@ -109,6 +127,26 @@ async def api_prices():
     return JSONResponse(content=prices)
 
 
+@app.get("/api/timing")
+async def api_timing():
+    """Get timing optimizer data."""
+    summary = timing_optimizer.get_summary()
+    best_bucket, best_roi = timing_optimizer.get_best_bucket()
+    return JSONResponse(content={
+        "buckets": summary,
+        "best_bucket": best_bucket,
+        "best_roi": f"{best_roi*100:+.1f}%"
+    })
+
+
+@app.get("/api/risk")
+async def api_risk():
+    """Get risk management status."""
+    open_positions = get_open_positions()
+    summary = risk_manager.get_risk_summary(open_positions, 1000)
+    return JSONResponse(content=summary)
+
+
 @app.post("/api/reset")
 async def api_reset():
     """Reset all data (for testing)."""
@@ -125,6 +163,13 @@ async def api_dashboard():
     
     # Fetch live crypto prices
     crypto_prices = await fetch_crypto_prices()
+    
+    # Get timing optimizer data
+    timing_summary = timing_optimizer.get_summary()
+    best_bucket, best_roi = timing_optimizer.get_best_bucket()
+    
+    # Get risk summary
+    risk_summary = risk_manager.get_risk_summary(open_positions, 1000)
     
     # Enrich open positions with live market data
     enriched_positions = []
@@ -162,6 +207,12 @@ async def api_dashboard():
         "open_positions": enriched_positions,
         "closed_positions": closed_positions,
         "crypto_prices": crypto_prices,
+        "timing": {
+            "buckets": timing_summary,
+            "best_bucket": best_bucket,
+            "best_roi": f"{best_roi*100:+.1f}%" if best_roi != float('-inf') else "N/A"
+        },
+        "risk": risk_summary,
         "timestamp": datetime.utcnow().isoformat()
     })
 
