@@ -3,16 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Paper Trading Dashboard</title>
+    <title>Crypto Trading Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background: #111827; color: #e2e8f0; font-family: system-ui, sans-serif; }
         .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-        .flash-green { animation: flashGreen 0.5s ease-out; }
-        .flash-red { animation: flashRed 0.5s ease-out; }
-        @keyframes flashGreen { 0% { background: rgba(34, 197, 94, 0.3); } 100% { background: transparent; } }
-        @keyframes flashRed { 0% { background: rgba(239, 68, 68, 0.3); } 100% { background: transparent; } }
     </style>
 </head>
 <body class="min-h-screen p-4">
@@ -21,10 +17,10 @@
         <div class="flex items-center justify-between mb-6">
             <div>
                 <h1 class="text-2xl font-bold flex items-center gap-3">
-                    <span class="text-3xl">📈</span>
-                    Crypto Paper Trading
+                    <span class="text-3xl">📊</span>
+                    Crypto Trading Dashboard
                 </h1>
-                <p class="text-gray-500 mt-1">15-Min Binary Simulation + 2x Leverage</p>
+                <p class="text-gray-500 mt-1">Polymarket Binary Bets + Spot Trading</p>
             </div>
             <div class="flex items-center gap-4">
                 <div class="text-right">
@@ -35,39 +31,48 @@
             </div>
         </div>
 
-        <!-- Live Crypto Prices -->
+        <!-- Live Crypto Prices + Signals -->
         <div class="flex gap-4 mb-6 flex-wrap" id="cryptoPrices">
             <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
                 <span class="text-orange-400 font-bold">BTC</span>
                 <div>
                     <div id="priceBTC" class="font-mono font-bold">$--</div>
-                    <div id="changeBTC" class="text-xs text-gray-500">--%</div>
                 </div>
                 <div id="rsiBTC" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
                 <div id="signalBTC" class="text-xs px-2 py-1 rounded bg-gray-700">--</div>
+                <div id="oddsBTC" class="text-xs px-2 py-1 rounded bg-purple-700/50 hidden">--</div>
             </div>
             <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
                 <span class="text-blue-400 font-bold">ETH</span>
                 <div>
                     <div id="priceETH" class="font-mono font-bold">$--</div>
-                    <div id="changeETH" class="text-xs text-gray-500">--%</div>
                 </div>
                 <div id="rsiETH" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
                 <div id="signalETH" class="text-xs px-2 py-1 rounded bg-gray-700">--</div>
+                <div id="oddsETH" class="text-xs px-2 py-1 rounded bg-purple-700/50 hidden">--</div>
             </div>
             <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
                 <span class="text-purple-400 font-bold">SOL</span>
                 <div>
                     <div id="priceSOL" class="font-mono font-bold">$--</div>
-                    <div id="changeSOL" class="text-xs text-gray-500">--%</div>
                 </div>
                 <div id="rsiSOL" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
                 <div id="signalSOL" class="text-xs px-2 py-1 rounded bg-gray-700">--</div>
+                <div id="oddsSOL" class="text-xs px-2 py-1 rounded bg-purple-700/50 hidden">--</div>
             </div>
         </div>
 
+        <!-- Live Polymarket 15-Min Markets -->
+        <div id="pmMarketsContainer" class="mb-6 bg-purple-900/20 border border-purple-500/30 rounded-xl p-4">
+            <h3 class="font-bold text-purple-400 mb-2">Live Polymarket 15-Min Odds</h3>
+            <div id="pmMarkets" class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div class="text-gray-500 text-center py-2">Loading...</div>
+            </div>
+            <div class="text-xs text-gray-500 mt-2">Source: <a href="https://polymarket.com/crypto/15M" target="_blank" class="text-purple-400 underline">polymarket.com/crypto/15M</a></div>
+        </div>
+
         <!-- Overall Stats -->
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
             <div class="bg-gray-800/50 rounded-lg p-3">
                 <div class="text-gray-400 text-xs uppercase">Bankroll</div>
                 <div id="bankroll" class="text-xl font-bold text-blue-400">$1,000</div>
@@ -85,22 +90,18 @@
                 <div id="winRate" class="text-xl font-bold">--%</div>
             </div>
             <div class="bg-gray-800/50 rounded-lg p-3">
-                <div class="text-gray-400 text-xs uppercase">Total Trades</div>
-                <div id="totalTrades" class="text-xl font-bold">0</div>
-            </div>
-            <div class="bg-gray-800/50 rounded-lg p-3">
-                <div class="text-gray-400 text-xs uppercase">Open</div>
+                <div class="text-gray-400 text-xs uppercase">Open Trades</div>
                 <div id="openTrades" class="text-xl font-bold text-yellow-400">0</div>
             </div>
         </div>
 
-        <!-- Split: Binary vs Leverage -->
+        <!-- Split: Polymarket vs Spot -->
         <div class="grid lg:grid-cols-2 gap-6">
-            <!-- 15-Min Binary Simulation -->
+            <!-- Polymarket Binary Bets -->
             <div class="border-2 border-purple-500/50 bg-purple-500/5 rounded-xl p-4">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-bold flex items-center gap-2">
-                        <span>🎲</span> 15-Min Binary
+                        <span>🎲</span> Polymarket Binary
                     </h2>
                     <div class="text-right">
                         <div id="pmStats" class="text-xs text-gray-500">0W / 0L</div>
@@ -108,9 +109,10 @@
                     </div>
                 </div>
                 
-                <div class="text-xs text-purple-300 mb-3 flex gap-4 flex-wrap">
+                <div class="text-xs text-purple-300 mb-3 flex gap-3 flex-wrap">
                     <span>⏱️ 15-min window</span>
-                    <span>✅ Win: +80-120%</span>
+                    <span>🎯 Real odds</span>
+                    <span>✅ Win: 1/odds</span>
                     <span>❌ Lose: -100%</span>
                 </div>
                 
@@ -129,35 +131,35 @@
                 </div>
             </div>
 
-            <!-- 2x Leverage Trading -->
+            <!-- Spot Trading -->
             <div class="border-2 border-orange-500/50 bg-orange-500/5 rounded-xl p-4">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-bold flex items-center gap-2">
-                        <span>🚀</span> 2x Leverage
+                        <span>📈</span> Spot Trading (2x)
                     </h2>
                     <div class="text-right">
-                        <div id="lvStats" class="text-xs text-gray-500">0W / 0L</div>
-                        <div id="lvPnl" class="font-bold text-green-400">$0.00</div>
+                        <div id="spotStats" class="text-xs text-gray-500">0W / 0L</div>
+                        <div id="spotPnl" class="font-bold text-green-400">$0.00</div>
                     </div>
                 </div>
                 
-                <div class="text-xs text-orange-300 mb-3 flex gap-4 flex-wrap">
+                <div class="text-xs text-orange-300 mb-3 flex gap-3 flex-wrap">
                     <span>📈 Trail: 1.5%</span>
                     <span>🛑 SL: -3%</span>
                     <span>📊 Signal exit</span>
-                    <span>⏱️ Max: 2h</span>
+                    <span>💰 Real P&L</span>
                 </div>
                 
                 <div class="mb-4">
                     <h3 class="text-sm font-bold text-gray-400 uppercase mb-2">Open Positions (Live P&L)</h3>
-                    <div id="lvOpenPositions" class="space-y-2 max-h-48 overflow-y-auto">
+                    <div id="spotOpenPositions" class="space-y-2 max-h-48 overflow-y-auto">
                         <div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open positions</div>
                     </div>
                 </div>
                 
                 <div>
                     <h3 class="text-sm font-bold text-gray-400 uppercase mb-2">Closed Trades</h3>
-                    <div id="lvClosedPositions" class="space-y-2 max-h-36 overflow-y-auto">
+                    <div id="spotClosedPositions" class="space-y-2 max-h-36 overflow-y-auto">
                         <div class="text-center py-2 text-gray-500 text-sm">No results yet</div>
                     </div>
                 </div>
@@ -172,28 +174,9 @@
             </div>
         </div>
 
-        <!-- Strategy Info -->
-        <div class="mt-6 bg-gray-800/30 rounded-xl p-4 border border-gray-700/50">
-            <h3 class="font-bold mb-3">Strategy Details</h3>
-            <div class="grid md:grid-cols-3 gap-4 text-sm">
-                <div>
-                    <div class="text-gray-400 mb-1">Entry Signal</div>
-                    <div class="text-gray-300">RSI &lt;35 (buy) / &gt;65 (sell)</div>
-                </div>
-                <div>
-                    <div class="text-gray-400 mb-1">Position Sizing (Kelly)</div>
-                    <div class="text-gray-300">Base: 5% bankroll, Max: 25%</div>
-                </div>
-                <div>
-                    <div class="text-gray-400 mb-1">Confidence Scaling</div>
-                    <div class="text-gray-300">55% conf = 5%, 85% conf = 25%</div>
-                </div>
-            </div>
-        </div>
-
         <!-- Footer -->
         <div class="mt-8 text-center text-gray-600 text-sm">
-            <div>Auto-trades every minute • Prices update every 2 seconds • Paper trading mode</div>
+            <div>Auto-trades every minute • Prices update every 5 seconds • Paper trading mode</div>
         </div>
     </div>
 
@@ -203,8 +186,6 @@
         const SIGNAL_URL = `${SUPABASE_URL}/functions/v1/generate-live-signal`;
         
         const STARTING_BANKROLL = 1000;
-        const BASE_POSITION_PCT = 0.05;  // 5% base
-        const MAX_POSITION_PCT = 0.25;   // 25% max
         const LEVERAGE = 2;
         
         let currentPrices = {};
@@ -217,7 +198,7 @@
         
         function formatPnlPercent(pct) {
             const sign = pct >= 0 ? '+' : '';
-            return `${sign}${pct.toFixed(2)}%`;
+            return `${sign}${pct.toFixed(1)}%`;
         }
 
         function getRsiBadgeClass(rsi) {
@@ -232,15 +213,6 @@
             return '<span class="px-2 py-1 rounded bg-gray-700 text-gray-400">— HOLD</span>';
         }
 
-        function calcPositionSize(confidence, bankroll) {
-            // Scale from 5% at 55% conf to 25% at 85% conf
-            const confRange = 0.85 - 0.55;
-            const sizeRange = MAX_POSITION_PCT - BASE_POSITION_PCT;
-            const confNorm = Math.max(0, Math.min(1, (confidence - 0.55) / confRange));
-            const sizePct = BASE_POSITION_PCT + (confNorm * sizeRange);
-            return Math.round(bankroll * sizePct);
-        }
-
         function getExitBadge(reason) {
             if (!reason) return '';
             if (reason.startsWith('trailing')) return '<span class="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">📈</span>';
@@ -250,103 +222,127 @@
             return '';
         }
 
-        function renderPosition(trade, isOpen, type) {
+        function renderPmOpen(trade) {
             const symbol = trade.asset.replace('USDT', '');
             const isUp = trade.direction === 'UP';
-            const leverage = type === 'lv' ? LEVERAGE : 1;
-            const posSize = calcPositionSize(trade.confidence || 0.6, currentBankroll);
+            const currentPrice = currentPrices[trade.asset];
+            const entryPrice = parseFloat(trade.entry_price);
+            const elapsed = Math.floor((Date.now() - new Date(trade.entry_time).getTime()) / 60000);
+            const timeLeft = Math.max(0, 15 - elapsed);
             
-            if (isOpen) {
-                const currentPrice = currentPrices[trade.asset];
-                const entryPrice = parseFloat(trade.entry_price);
-                const elapsed = Math.floor((Date.now() - new Date(trade.entry_time).getTime()) / 60000);
-                const storedSize = trade.indicators?.position_size || posSize;
-                
-                if (type === 'pm') {
-                    // Binary bet: show current direction vs prediction, not live P&L
-                    const priceChange = currentPrice ? currentPrice - entryPrice : 0;
-                    const currentlyWinning = (trade.direction === 'UP' && priceChange > 0) || (trade.direction === 'DOWN' && priceChange < 0);
-                    const payoutRate = trade.indicators?.payout_rate || 0.8;
-                    const potentialWin = storedSize * payoutRate;
-                    const timeLeft = Math.max(0, 15 - elapsed);
-                    
-                    return `
-                        <div class="p-3 rounded-lg border ${currentlyWinning ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
-                                    <span class="text-xs text-gray-500">${timeLeft}m left</span>
-                                </div>
-                                <div class="text-right">
-                                    <div class="font-mono font-bold ${currentlyWinning ? 'text-green-400' : 'text-red-400'}">${currentlyWinning ? '📈 Winning' : '📉 Losing'}</div>
-                                    <div class="text-xs text-gray-400">Win: +$${potentialWin.toFixed(0)} / Lose: -$${storedSize}</div>
-                                </div>
-                            </div>
-                            <div class="text-xs text-gray-500 mt-1 flex justify-between">
-                                <span>$${storedSize} @ $${entryPrice.toLocaleString()}</span>
-                                <span>Now: $${currentPrice?.toLocaleString() || '--'}</span>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    // Leverage: show live P&L
-                    let pnlPercent = currentPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
-                    if (trade.direction === 'DOWN') pnlPercent = -pnlPercent;
-                    pnlPercent *= leverage;
-                    const pnlDollar = (pnlPercent / 100) * storedSize;
-                    const isProfit = pnlDollar >= 0;
-                    
-                    return `
-                        <div class="p-3 rounded-lg border ${isProfit ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
-                                    <span class="text-xs text-gray-500">${elapsed}m</span>
-                                </div>
-                                <div class="text-right">
-                                    <div class="font-mono font-bold ${isProfit ? 'text-green-400' : 'text-red-400'} live-pnl">${formatPnl(pnlDollar)}</div>
-                                    <div class="text-xs ${isProfit ? 'text-green-500' : 'text-red-500'}">${formatPnlPercent(pnlPercent)}</div>
-                                </div>
-                            </div>
-                            <div class="text-xs text-gray-500 mt-1 flex justify-between">
-                                <span>$${storedSize} @ $${entryPrice.toLocaleString()}</span>
-                                <span>${((trade.confidence || 0.6) * 100).toFixed(0)}% conf</span>
-                            </div>
-                        </div>
-                    `;
-                }
-            } else {
-                const pnlPct = parseFloat(trade.pnl_percent) || 0;
-                const won = trade.won;
-                // For binary (PM): pnlPct is +80-120% or -100%
-                // For leverage (LV): pnlPct is actual leveraged %
-                const storedSize = trade.indicators?.position_size || posSize;
-                const pnlDollar = (pnlPct / 100) * storedSize;
-                
-                // Show payout info for binary
-                const payoutInfo = type === 'pm' 
-                    ? (won ? `+${pnlPct.toFixed(0)}%` : '-100%')
-                    : formatPnlPercent(pnlPct);
-                
-                return `
-                    <div class="p-2 rounded-lg border ${won ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'} flex items-center justify-between">
+            const betOdds = trade.indicators?.bet_odds || 0.55;
+            const potentialPayout = trade.indicators?.potential_payout || ((1/betOdds) - 1);
+            const posSize = trade.indicators?.position_size || 50;
+            const potentialWin = posSize * potentialPayout;
+            
+            // Check if currently winning
+            const priceChange = currentPrice ? currentPrice - entryPrice : 0;
+            const currentlyWinning = (trade.direction === 'UP' && priceChange > 0) || (trade.direction === 'DOWN' && priceChange < 0);
+            
+            return `
+                <div class="p-3 rounded-lg border ${currentlyWinning ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
+                    <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
-                            <span class="${isUp ? 'text-green-400' : 'text-red-400'}">${symbol}</span>
-                            ${getExitBadge(trade.exit_reason)}
-                            <span class="text-xs text-gray-500">$${storedSize} ${payoutInfo}</span>
+                            <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
+                            <span class="text-xs text-purple-400">@${(betOdds * 100).toFixed(0)}%</span>
+                            <span class="text-xs text-gray-500">${timeLeft}m left</span>
                         </div>
-                        <span class="font-bold ${won ? 'text-green-400' : 'text-red-400'}">${won ? '✅' : '❌'} ${formatPnl(pnlDollar)}</span>
+                        <div class="text-right">
+                            <div class="font-mono font-bold ${currentlyWinning ? 'text-green-400' : 'text-red-400'}">${currentlyWinning ? '📈 Winning' : '📉 Losing'}</div>
+                        </div>
                     </div>
-                `;
-            }
+                    <div class="text-xs text-gray-500 mt-1 flex justify-between">
+                        <span>Stake: $${posSize}</span>
+                        <span class="text-green-400">Win: +$${potentialWin.toFixed(0)}</span>
+                        <span class="text-red-400">Lose: -$${posSize}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPmClosed(trade) {
+            const symbol = trade.asset.replace('USDT', '');
+            const isUp = trade.direction === 'UP';
+            const won = trade.won;
+            const posSize = trade.indicators?.position_size || 50;
+            const betOdds = trade.indicators?.bet_odds || 0.55;
+            const pnlPct = parseFloat(trade.pnl_percent) || 0;
+            const pnlDollar = (pnlPct / 100) * posSize;
+            
+            return `
+                <div class="p-2 rounded-lg border ${won ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'} flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="${isUp ? 'text-green-400' : 'text-red-400'}">${symbol}</span>
+                        <span class="text-xs text-purple-400">@${(betOdds * 100).toFixed(0)}%</span>
+                        ${getExitBadge(trade.exit_reason)}
+                    </div>
+                    <span class="font-bold ${won ? 'text-green-400' : 'text-red-400'}">${won ? '✅' : '❌'} ${formatPnl(pnlDollar)}</span>
+                </div>
+            `;
+        }
+
+        function renderSpotOpen(trade) {
+            const symbol = trade.asset.replace('USDT', '');
+            const isUp = trade.direction === 'UP';
+            const currentPrice = currentPrices[trade.asset];
+            const entryPrice = parseFloat(trade.entry_price);
+            const elapsed = Math.floor((Date.now() - new Date(trade.entry_time).getTime()) / 60000);
+            const posSize = trade.indicators?.position_size || 50;
+            
+            let pnlPercent = currentPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+            if (trade.direction === 'DOWN') pnlPercent = -pnlPercent;
+            pnlPercent *= LEVERAGE;
+            const pnlDollar = (pnlPercent / 100) * posSize;
+            const isProfit = pnlDollar >= 0;
+            
+            return `
+                <div class="p-3 rounded-lg border ${isProfit ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
+                            <span class="text-xs text-orange-400">2x</span>
+                            <span class="text-xs text-gray-500">${elapsed}m</span>
+                        </div>
+                        <div class="text-right">
+                            <div class="font-mono font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}">${formatPnl(pnlDollar)}</div>
+                            <div class="text-xs ${isProfit ? 'text-green-500' : 'text-red-500'}">${formatPnlPercent(pnlPercent)}</div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1 flex justify-between">
+                        <span>$${posSize} @ $${entryPrice.toLocaleString()}</span>
+                        <span>Now: $${currentPrice?.toLocaleString() || '--'}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSpotClosed(trade) {
+            const symbol = trade.asset.replace('USDT', '');
+            const isUp = trade.direction === 'UP';
+            const won = trade.won;
+            const posSize = trade.indicators?.position_size || 50;
+            const pnlPct = parseFloat(trade.pnl_percent) || 0;
+            const pnlDollar = (pnlPct / 100) * posSize;
+            
+            return `
+                <div class="p-2 rounded-lg border ${won ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'} flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="${isUp ? 'text-green-400' : 'text-red-400'}">${symbol}</span>
+                        ${getExitBadge(trade.exit_reason)}
+                        <span class="text-xs text-gray-500">${formatPnlPercent(pnlPct)}</span>
+                    </div>
+                    <span class="font-bold ${won ? 'text-green-400' : 'text-red-400'}">${won ? '✅' : '❌'} ${formatPnl(pnlDollar)}</span>
+                </div>
+            `;
         }
 
         async function fetchData() {
             try {
-                // Get signals
+                // Get signals + Polymarket odds
                 const signalResp = await fetch(SIGNAL_URL);
                 const signalData = await signalResp.json();
                 
+                // Update crypto prices and signals
                 if (signalData.signals) {
                     for (const asset of ['BTC', 'ETH', 'SOL']) {
                         const sig = signalData.signals[asset];
@@ -359,97 +355,122 @@
                             
                             document.getElementById('signal' + asset).innerHTML = getSignalBadge(sig.direction);
                             
+                            // Show real PM odds
+                            const oddsEl = document.getElementById('odds' + asset);
+                            if (sig.pmOdds) {
+                                oddsEl.textContent = `Up:${(sig.pmOdds.up * 100).toFixed(0)}% / Down:${(sig.pmOdds.down * 100).toFixed(0)}%`;
+                                oddsEl.classList.remove('hidden');
+                            } else {
+                                oddsEl.classList.add('hidden');
+                            }
+                            
                             currentPrices[asset + 'USDT'] = sig.currentPrice;
                         }
                     }
                 }
                 
+                // Show live Polymarket 15-min markets
+                if (signalData.polymarket?.live_markets?.length > 0) {
+                    document.getElementById('pmMarkets').innerHTML = signalData.polymarket.live_markets.map(m => `
+                        <div class="p-3 bg-gray-800/30 rounded-lg border border-purple-500/20">
+                            <div class="font-bold text-${m.asset === 'BTC' ? 'orange' : m.asset === 'ETH' ? 'blue' : 'purple'}-400 mb-1">${m.asset}</div>
+                            <div class="flex justify-between">
+                                <span class="text-green-400">↑ Up: ${m.up}</span>
+                                <span class="text-red-400">↓ Down: ${m.down}</span>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('pmMarkets').innerHTML = '<div class="text-gray-500 text-center py-2 col-span-3">No live markets</div>';
+                }
+                
                 // Get paper trades
                 const headers = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` };
                 
-                const [pmOpenResp, pmClosedResp, lvOpenResp, lvClosedResp] = await Promise.all([
+                const [pmOpenResp, pmClosedResp, spotOpenResp, spotClosedResp] = await Promise.all([
                     fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.polymarket&exit_time=is.null&order=entry_time.desc`, { headers }),
                     fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.polymarket&exit_time=not.is.null&order=exit_time.desc&limit=10`, { headers }),
-                    fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.leverage&exit_time=is.null&order=entry_time.desc`, { headers }),
-                    fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.leverage&exit_time=not.is.null&order=exit_time.desc&limit=10`, { headers })
+                    fetch(`${SUPABASE_URL}/rest/v1/paper_trades?or=(trade_type.eq.spot,trade_type.eq.leverage)&exit_time=is.null&order=entry_time.desc`, { headers }),
+                    fetch(`${SUPABASE_URL}/rest/v1/paper_trades?or=(trade_type.eq.spot,trade_type.eq.leverage)&exit_time=not.is.null&order=exit_time.desc&limit=10`, { headers })
                 ]);
                 
                 const pmOpen = await pmOpenResp.json();
                 const pmClosed = await pmClosedResp.json();
-                const lvOpen = await lvOpenResp.json();
-                const lvClosed = await lvClosedResp.json();
+                const spotOpen = await spotOpenResp.json();
+                const spotClosed = await spotClosedResp.json();
                 
                 // Render positions
                 document.getElementById('pmOpenPositions').innerHTML = pmOpen.length > 0
-                    ? pmOpen.map(t => renderPosition(t, true, 'pm')).join('')
+                    ? pmOpen.map(t => renderPmOpen(t)).join('')
                     : '<div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open bets</div>';
                     
                 document.getElementById('pmClosedPositions').innerHTML = pmClosed.length > 0
-                    ? pmClosed.map(t => renderPosition(t, false, 'pm')).join('')
+                    ? pmClosed.map(t => renderPmClosed(t)).join('')
                     : '<div class="text-center py-2 text-gray-500 text-sm">No results yet</div>';
                 
-                document.getElementById('lvOpenPositions').innerHTML = lvOpen.length > 0
-                    ? lvOpen.map(t => renderPosition(t, true, 'lv')).join('')
+                document.getElementById('spotOpenPositions').innerHTML = spotOpen.length > 0
+                    ? spotOpen.map(t => renderSpotOpen(t)).join('')
                     : '<div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open positions</div>';
                     
-                document.getElementById('lvClosedPositions').innerHTML = lvClosed.length > 0
-                    ? lvClosed.map(t => renderPosition(t, false, 'lv')).join('')
+                document.getElementById('spotClosedPositions').innerHTML = spotClosed.length > 0
+                    ? spotClosed.map(t => renderSpotClosed(t)).join('')
                     : '<div class="text-center py-2 text-gray-500 text-sm">No results yet</div>';
                 
-                // Stats
-                const allClosed = [...pmClosed, ...lvClosed];
+                // Calculate stats
                 const pmWins = pmClosed.filter(t => t.won).length;
-                const lvWins = lvClosed.filter(t => t.won).length;
-                const wins = pmWins + lvWins;
-                const winRate = allClosed.length > 0 ? (wins / allClosed.length * 100).toFixed(1) : '--';
+                const spotWins = spotClosed.filter(t => t.won).length;
+                const allClosed = [...pmClosed, ...spotClosed];
+                const totalWins = pmWins + spotWins;
+                const winRate = allClosed.length > 0 ? (totalWins / allClosed.length * 100).toFixed(1) : '--';
                 
-                let pmPnl = 0, lvPnl = 0;
+                let pmPnl = 0, spotPnl = 0;
                 pmClosed.forEach(t => { 
-                    const size = t.indicators?.position_size || calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
+                    const size = t.indicators?.position_size || 50;
                     pmPnl += (parseFloat(t.pnl_percent) || 0) / 100 * size; 
                 });
-                lvClosed.forEach(t => { 
-                    const size = t.indicators?.position_size || calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
-                    lvPnl += (parseFloat(t.pnl_percent) || 0) / 100 * size; 
+                spotClosed.forEach(t => { 
+                    const size = t.indicators?.position_size || 50;
+                    spotPnl += (parseFloat(t.pnl_percent) || 0) / 100 * size; 
                 });
                 
-                const totalPnl = pmPnl + lvPnl;
+                const totalPnl = pmPnl + spotPnl;
                 currentBankroll = STARTING_BANKROLL + totalPnl;
                 
-                // Calculate unrealized
+                // Calculate unrealized (spot only - PM is binary)
                 let unrealized = 0;
-                [...lvOpen].forEach(t => {
+                spotOpen.forEach(t => {
                     const price = currentPrices[t.asset];
+                    const posSize = t.indicators?.position_size || 50;
                     if (price) {
                         let pct = ((price - t.entry_price) / t.entry_price) * 100;
                         if (t.direction === 'DOWN') pct = -pct;
                         pct *= LEVERAGE;
-                        unrealized += (pct / 100) * calcPositionSize(t.confidence || 0.6, currentBankroll);
+                        unrealized += (pct / 100) * posSize;
                     }
                 });
                 
+                // Update UI
                 document.getElementById('bankroll').textContent = '$' + currentBankroll.toFixed(0);
                 document.getElementById('totalPnl').textContent = formatPnl(totalPnl);
                 document.getElementById('totalPnl').className = `text-xl font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
                 document.getElementById('unrealizedPnl').textContent = formatPnl(unrealized);
                 document.getElementById('unrealizedPnl').className = `text-xl font-bold ${unrealized >= 0 ? 'text-green-400' : 'text-red-400'}`;
                 document.getElementById('winRate').textContent = winRate + '%';
-                document.getElementById('totalTrades').textContent = allClosed.length;
-                document.getElementById('openTrades').textContent = pmOpen.length + lvOpen.length;
+                document.getElementById('openTrades').textContent = pmOpen.length + spotOpen.length;
                 
                 document.getElementById('pmStats').textContent = `${pmWins}W / ${pmClosed.length - pmWins}L`;
                 document.getElementById('pmPnl').textContent = formatPnl(pmPnl);
                 document.getElementById('pmPnl').className = `font-bold ${pmPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
                 
-                document.getElementById('lvStats').textContent = `${lvWins}W / ${lvClosed.length - lvWins}L`;
-                document.getElementById('lvPnl').textContent = formatPnl(lvPnl);
-                document.getElementById('lvPnl').className = `font-bold ${lvPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
+                document.getElementById('spotStats').textContent = `${spotWins}W / ${spotClosed.length - spotWins}L`;
+                document.getElementById('spotPnl').textContent = formatPnl(spotPnl);
+                document.getElementById('spotPnl').className = `font-bold ${spotPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
                 
                 // Exit breakdown
-                if (lvClosed.length > 0) {
-                    const trails = lvClosed.filter(t => t.exit_reason?.startsWith('trailing')).length;
-                    const sls = lvClosed.filter(t => t.exit_reason?.startsWith('stop_loss')).length;
-                    const sigs = lvClosed.filter(t => t.exit_reason?.startsWith('signal')).length;
+                if (spotClosed.length > 0) {
+                    const trails = spotClosed.filter(t => t.exit_reason?.startsWith('trailing')).length;
+                    const sls = spotClosed.filter(t => t.exit_reason?.startsWith('stop_loss')).length;
+                    const sigs = spotClosed.filter(t => t.exit_reason?.startsWith('signal')).length;
                     document.getElementById('trailCount').textContent = trails;
                     document.getElementById('slCount').textContent = sls;
                     document.getElementById('sigCount').textContent = sigs;
