@@ -108,10 +108,10 @@
                     </div>
                 </div>
                 
-                <div class="text-xs text-purple-300 mb-3 flex gap-4">
+                <div class="text-xs text-purple-300 mb-3 flex gap-4 flex-wrap">
                     <span>⏱️ 15-min window</span>
-                    <span>🎯 Binary outcome</span>
-                    <span>💰 Kelly-scaled bets</span>
+                    <span>✅ Win: +80-120%</span>
+                    <span>❌ Lose: -100%</span>
                 </div>
                 
                 <div class="mb-4">
@@ -259,43 +259,81 @@
             if (isOpen) {
                 const currentPrice = currentPrices[trade.asset];
                 const entryPrice = parseFloat(trade.entry_price);
-                let pnlPercent = currentPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
-                if (trade.direction === 'DOWN') pnlPercent = -pnlPercent;
-                pnlPercent *= leverage;
-                const pnlDollar = (pnlPercent / 100) * posSize;
-                const isProfit = pnlDollar >= 0;
-                
                 const elapsed = Math.floor((Date.now() - new Date(trade.entry_time).getTime()) / 60000);
-                const timeInfo = type === 'pm' ? `${Math.max(0, 15 - elapsed)}m left` : `${elapsed}m`;
+                const storedSize = trade.indicators?.position_size || posSize;
                 
-                return `
-                    <div class="p-3 rounded-lg border ${isProfit ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}" data-asset="${trade.asset}" data-entry="${trade.entry_price}" data-direction="${trade.direction}" data-conf="${trade.confidence || 0.6}">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
-                                <span class="text-xs text-gray-500">${timeInfo}</span>
+                if (type === 'pm') {
+                    // Binary bet: show current direction vs prediction, not live P&L
+                    const priceChange = currentPrice ? currentPrice - entryPrice : 0;
+                    const currentlyWinning = (trade.direction === 'UP' && priceChange > 0) || (trade.direction === 'DOWN' && priceChange < 0);
+                    const payoutRate = trade.indicators?.payout_rate || 0.8;
+                    const potentialWin = storedSize * payoutRate;
+                    const timeLeft = Math.max(0, 15 - elapsed);
+                    
+                    return `
+                        <div class="p-3 rounded-lg border ${currentlyWinning ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
+                                    <span class="text-xs text-gray-500">${timeLeft}m left</span>
+                                </div>
+                                <div class="text-right">
+                                    <div class="font-mono font-bold ${currentlyWinning ? 'text-green-400' : 'text-red-400'}">${currentlyWinning ? '📈 Winning' : '📉 Losing'}</div>
+                                    <div class="text-xs text-gray-400">Win: +$${potentialWin.toFixed(0)} / Lose: -$${storedSize}</div>
+                                </div>
                             </div>
-                            <div class="text-right">
-                                <div class="font-mono font-bold ${isProfit ? 'text-green-400' : 'text-red-400'} live-pnl">${formatPnl(pnlDollar)}</div>
-                                <div class="text-xs ${isProfit ? 'text-green-500' : 'text-red-500'}">${formatPnlPercent(pnlPercent)}</div>
+                            <div class="text-xs text-gray-500 mt-1 flex justify-between">
+                                <span>$${storedSize} @ $${entryPrice.toLocaleString()}</span>
+                                <span>Now: $${currentPrice?.toLocaleString() || '--'}</span>
                             </div>
                         </div>
-                        <div class="text-xs text-gray-500 mt-1 flex justify-between">
-                            <span>$${posSize} @ $${entryPrice.toLocaleString()}</span>
-                            <span>${((trade.confidence || 0.6) * 100).toFixed(0)}% conf</span>
+                    `;
+                } else {
+                    // Leverage: show live P&L
+                    let pnlPercent = currentPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+                    if (trade.direction === 'DOWN') pnlPercent = -pnlPercent;
+                    pnlPercent *= leverage;
+                    const pnlDollar = (pnlPercent / 100) * storedSize;
+                    const isProfit = pnlDollar >= 0;
+                    
+                    return `
+                        <div class="p-3 rounded-lg border ${isProfit ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
+                                    <span class="text-xs text-gray-500">${elapsed}m</span>
+                                </div>
+                                <div class="text-right">
+                                    <div class="font-mono font-bold ${isProfit ? 'text-green-400' : 'text-red-400'} live-pnl">${formatPnl(pnlDollar)}</div>
+                                    <div class="text-xs ${isProfit ? 'text-green-500' : 'text-red-500'}">${formatPnlPercent(pnlPercent)}</div>
+                                </div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1 flex justify-between">
+                                <span>$${storedSize} @ $${entryPrice.toLocaleString()}</span>
+                                <span>${((trade.confidence || 0.6) * 100).toFixed(0)}% conf</span>
+                            </div>
                         </div>
-                    </div>
-                `;
+                    `;
+                }
             } else {
                 const pnlPct = parseFloat(trade.pnl_percent) || 0;
-                const pnlDollar = (pnlPct / 100) * posSize;
                 const won = trade.won;
+                // For binary (PM): pnlPct is +80-120% or -100%
+                // For leverage (LV): pnlPct is actual leveraged %
+                const storedSize = trade.indicators?.position_size || posSize;
+                const pnlDollar = (pnlPct / 100) * storedSize;
+                
+                // Show payout info for binary
+                const payoutInfo = type === 'pm' 
+                    ? (won ? `+${pnlPct.toFixed(0)}%` : '-100%')
+                    : formatPnlPercent(pnlPct);
+                
                 return `
                     <div class="p-2 rounded-lg border ${won ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'} flex items-center justify-between">
                         <div class="flex items-center gap-2">
                             <span class="${isUp ? 'text-green-400' : 'text-red-400'}">${symbol}</span>
                             ${getExitBadge(trade.exit_reason)}
-                            <span class="text-xs text-gray-500">$${posSize}</span>
+                            <span class="text-xs text-gray-500">$${storedSize} ${payoutInfo}</span>
                         </div>
                         <span class="font-bold ${won ? 'text-green-400' : 'text-red-400'}">${won ? '✅' : '❌'} ${formatPnl(pnlDollar)}</span>
                     </div>
@@ -367,11 +405,11 @@
                 
                 let pmPnl = 0, lvPnl = 0;
                 pmClosed.forEach(t => { 
-                    const size = calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
+                    const size = t.indicators?.position_size || calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
                     pmPnl += (parseFloat(t.pnl_percent) || 0) / 100 * size; 
                 });
                 lvClosed.forEach(t => { 
-                    const size = calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
+                    const size = t.indicators?.position_size || calcPositionSize(t.confidence || 0.6, STARTING_BANKROLL);
                     lvPnl += (parseFloat(t.pnl_percent) || 0) / 100 * size; 
                 });
                 
