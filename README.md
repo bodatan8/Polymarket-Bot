@@ -6,96 +6,45 @@ Crypto paper trading system with live signals, deployed on Supabase + Azure.
 
 **https://polymktdash097744.z13.web.core.windows.net/**
 
-## Overview
+## Quick Summary
 
-This repository contains **two trading systems**:
-
-| System | Backend | Purpose |
-|--------|---------|---------|
-| **Paper Trading** | Supabase Edge Functions | Live crypto signals with simulated trading |
-| **Arbitrage Bot** | Python (Azure Container) | YES+NO arbitrage on Polymarket |
+| Component | Location | Status |
+|-----------|----------|--------|
+| **Dashboard** | Azure Static Website | Live, auto-refreshes every 5s |
+| **Trading Logic** | Supabase Edge Function | Runs every minute via pg_cron |
+| **Database** | Supabase PostgreSQL | Stores all trades |
+| **Price Data** | Binance API | Real-time crypto prices |
+| **Polymarket Odds** | Polymarket Gamma API | Real 15-min market odds |
 
 ---
 
-## System 1: Paper Trading (Active)
+## Trading Strategies
 
-Fully cloud-based paper trading with two parallel strategies:
+### 1. Polymarket Binary Bets (RSI Extreme 15m)
 
-### Strategies
+**Based on 90-day backtest: 54% win rate, +4% edge**
 
-| Strategy | Window | Exit Logic | Leverage |
-|----------|--------|------------|----------|
-| **15-Min Binary** | Fixed 15 min | Binary win/lose at expiry | 1x |
-| **2x Leverage** | Dynamic | Trailing stop, stop loss, signal reversal | 2x |
+| Condition | Action |
+|-----------|--------|
+| RSI (15-min) < 25 | Bet UP |
+| RSI (15-min) > 75 | Bet DOWN |
+| RSI 25-75 | No bet |
 
-### Architecture
+- Uses **real Polymarket 15-minute odds** from Gamma API
+- Holds exactly 15 minutes (binary outcome)
+- **Fee**: 2% on winnings
+- Payout: `(1/odds - 1) * 0.98` on win, -100% on loss
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PAPER TRADING SYSTEM                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                 SUPABASE (Cloud)                          │  │
-│  │                                                           │  │
-│  │   ┌─────────────────┐    ┌─────────────────┐             │  │
-│  │   │  Edge Function  │    │   Database      │             │  │
-│  │   │  generate-live- │───▶│   paper_trades  │             │  │
-│  │   │  signal         │    │                 │             │  │
-│  │   └─────────────────┘    └─────────────────┘             │  │
-│  │          ▲                                                │  │
-│  │          │ Every minute (pg_cron)                         │  │
-│  │                                                           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                         │                                       │
-│                         ▼                                       │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                 AZURE STORAGE                             │  │
-│  │                                                           │  │
-│  │   ┌─────────────────────────────────────────────────┐    │  │
-│  │   │  Static Website (index.html)                     │    │  │
-│  │   │  - Real-time P&L display                         │    │  │
-│  │   │  - Position tracking                             │    │  │
-│  │   │  - Win/loss statistics                           │    │  │
-│  │   └─────────────────────────────────────────────────┘    │  │
-│  │                                                           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                         │                                       │
-│                         ▼                                       │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                 BINANCE API                               │  │
-│  │   BTC, ETH, SOL price data (1-min candles)               │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 2. Spot Trading (RSI Mean Reversion 1m)
 
-### Signal Generation
+**Backtested with trailing stop for profit protection**
 
-Mean-reversion strategy based on:
+| Condition | Action |
+|-----------|--------|
+| RSI (1-min) < 35 | Buy (2x leverage) |
+| RSI (1-min) > 65 | Sell (2x leverage) |
 
-| Indicator | Buy Signal | Sell Signal |
-|-----------|------------|-------------|
-| RSI (14) | < 35 (oversold) | > 65 (overbought) |
-| EMA Distance | Below EMA8 | Above EMA8 |
-
-### Position Sizing (Kelly-Inspired)
-
-Position size scales with signal confidence:
-
-| Confidence | Position Size | % of Bankroll |
-|------------|---------------|---------------|
-| 55% | $50 | 5% |
-| 70% | $150 | 15% |
-| 85% | $250 | 25% (max) |
-
-### Exit Strategies
-
-**15-Min Binary:**
-- Closes exactly at 15 minutes
-- Binary outcome: win or lose based on price direction
-
-**2x Leverage:**
+**Exit Strategies:**
 | Exit Type | Condition |
 |-----------|-----------|
 | Trailing Stop | 1.5% pullback from peak |
@@ -103,97 +52,95 @@ Position size scales with signal confidence:
 | Signal Exit | RSI returns to neutral (45-55) |
 | Max Hold | 2 hours |
 
-### Performance Tracking
-
-The dashboard shows:
-- Real-time P&L for open positions
-- Closed trade history with exit reasons
-- Win rate and cumulative P&L
-- Per-strategy breakdown
+- **Fee**: 0.25% per trade (entry + exit + slippage)
 
 ---
 
-## System 2: Arbitrage Bot (Optional)
+## Architecture
 
-Automated arbitrage for Polymarket binary markets.
-
-### Run Locally
-
-```bash
-# Setup
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Configure
-cp env.example .env
-# Edit .env with your Polymarket API keys
-
-# Run
-python -m src.main
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PAPER TRADING SYSTEM                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   SUPABASE CLOUD                                               │
+│   ├── pg_cron (every minute)                                   │
+│   │   └── Triggers Edge Function                               │
+│   │                                                            │
+│   ├── Edge Function: generate-live-signal                      │
+│   │   ├── Fetch prices from Binance (BTC, ETH, SOL)           │
+│   │   ├── Fetch real odds from Polymarket Gamma API            │
+│   │   ├── Calculate RSI (15m for PM, 1m for Spot)              │
+│   │   ├── Close expired positions                              │
+│   │   ├── Open new positions if signal triggered               │
+│   │   └── Return stats JSON                                    │
+│   │                                                            │
+│   └── PostgreSQL                                               │
+│       └── paper_trades table                                   │
+│                                                                 │
+│   AZURE STORAGE                                                │
+│   └── Static Website (index.html)                              │
+│       ├── Polls Edge Function every 5 seconds                  │
+│       └── Displays real-time P&L                               │
+│                                                                 │
+│   EXTERNAL APIs                                                │
+│   ├── Binance: Price data (1m and 15m candles)                │
+│   └── Polymarket Gamma: Real 15-min market odds                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Project Structure
+## Backtest Results (90 days)
 
-```
-Polymarket Bot/
-├── README.md                 # This file
-├── ARCHITECTURE.md           # Technical details
-├── requirements.txt          # Python dependencies
-├── env.example               # Environment template
-│
-├── dashboard/
-│   └── build/
-│       └── index.html        # Live dashboard (deployed)
-│
-├── src/
-│   ├── main.py               # Arbitrage entry point
-│   ├── config.py             # Configuration
-│   │
-│   ├── arbitrage/            # Arbitrage detection
-│   │   ├── detector.py
-│   │   ├── binary_arb.py
-│   │   └── categorical_arb.py
-│   │
-│   ├── clients/              # External APIs
-│   │   ├── clob_client.py
-│   │   ├── gamma_client.py
-│   │   └── polygon_client.py
-│   │
-│   ├── execution/            # Order execution
-│   │   ├── executor.py
-│   │   └── merger.py
-│   │
-│   └── signals/              # Signal logic (reference)
-│       ├── live_predictor.py
-│       └── paper_trader.py
-│
-├── scripts/                  # Utility scripts
-├── deploy/                   # Deployment configs
-└── tests/                    # Test suite
-```
+Tested on ~26,000 candles per asset (BTC, ETH, SOL):
+
+| Strategy | Win Rate | Trades | Edge |
+|----------|----------|--------|------|
+| **RSI Extreme (25/75)** | **54.0%** | 2,849 | **+4.0%** |
+| RSI Extreme (20/80) | 53.3% | 1,423 | +3.3% |
+| Simple Contrarian | 50.8% | 25,914 | +0.8% |
+| Momentum | 49.2% | 25,914 | -0.8% |
+
+**BTC specifically**: 56.4% win rate with RSI Extreme strategy.
 
 ---
 
-## Supabase Edge Functions
+## Position Sizing
 
-| Function | Purpose | Schedule |
-|----------|---------|----------|
-| `generate-live-signal` | Generate signals, open/close trades | Every minute |
-| `polymarket-scanner` | Scan real Polymarket markets | On demand |
-| `polymarket-backfill` | Historical data analysis | On demand |
+Kelly-inspired scaling based on signal confidence:
 
-### Deploy Edge Function
-
-```bash
-supabase functions deploy generate-live-signal --project-ref oukirnoonygvvctrjmih
-```
+| Confidence | Position Size | % of Bankroll |
+|------------|---------------|---------------|
+| 55% | $50 | 5% |
+| 70% | $150 | 15% |
+| 85%+ | $250 | 25% (max) |
 
 ---
 
-## Database Schema (Supabase)
+## Fees Included
+
+| Platform | Fee Type | Rate |
+|----------|----------|------|
+| Polymarket | Fee on winnings | 2% |
+| Spot (Binance) | Trading fees | 0.1% × 2 |
+| Spot (Binance) | Slippage estimate | 0.05% |
+| **Spot Total** | Per round-trip | **0.25%** |
+
+---
+
+## Live URLs
+
+| Resource | URL |
+|----------|-----|
+| Dashboard | https://polymktdash097744.z13.web.core.windows.net/ |
+| Signal API | https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal |
+| GitHub | https://github.com/bodatan8/Polymarket-Bot |
+
+---
+
+## Database Schema
 
 ```sql
 CREATE TABLE paper_trades (
@@ -207,39 +154,11 @@ CREATE TABLE paper_trades (
     pnl_percent NUMERIC,
     won BOOLEAN,
     confidence NUMERIC,
-    trade_type TEXT DEFAULT 'polymarket',  -- polymarket, leverage
-    exit_reason TEXT,              -- trailing_stop, stop_loss, signal_exit, 15min_expiry
-    indicators JSONB,              -- rsi, ema_distance, max_pnl, position_size
+    trade_type TEXT,               -- 'polymarket' or 'spot'
+    exit_reason TEXT,
+    indicators JSONB,              -- strategy, rsi, bet_odds, position_size, etc.
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_ANON_KEY` | Public API key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Admin key (Edge Functions) |
-
-### Trading Parameters (in Edge Function)
-
-```typescript
-const BANKROLL = 1000;
-const BASE_SIZE_PCT = 0.05;    // 5% minimum
-const MAX_SIZE_PCT = 0.25;     // 25% maximum
-const LEVERAGE = 2;
-
-const RSI_OVERSOLD = 35;
-const RSI_OVERBOUGHT = 65;
-
-const LV_STOP_LOSS = -3;       // -3% leveraged
-const LV_TRAILING_STOP = 1.5;  // 1.5% pullback
-const LV_MAX_HOLD_MINUTES = 120;
 ```
 
 ---
@@ -258,18 +177,76 @@ az storage blob upload \
   --overwrite
 ```
 
-### Edge Functions (Supabase)
+### Edge Function (Supabase)
 
-Functions are deployed via Supabase CLI or MCP tools.
+Deployed via Supabase MCP tools or CLI:
+
+```bash
+supabase functions deploy generate-live-signal --project-ref oukirnoonygvvctrjmih
+```
 
 ---
 
-## Live URLs
+## Configuration
 
-| Resource | URL |
-|----------|-----|
-| Dashboard | https://polymktdash097744.z13.web.core.windows.net/ |
-| Signal API | https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal |
+### Key Parameters (in Edge Function)
+
+```typescript
+// Position sizing
+const BANKROLL = 1000;
+const BASE_SIZE_PCT = 0.05;    // 5% minimum
+const MAX_SIZE_PCT = 0.25;     // 25% maximum
+
+// Polymarket strategy (15-min RSI)
+const PM_RSI_OVERSOLD = 25;
+const PM_RSI_OVERBOUGHT = 75;
+const PM_WIN_FEE = 0.02;       // 2% on winnings
+
+// Spot strategy (1-min RSI)
+const SPOT_RSI_OVERSOLD = 35;
+const SPOT_RSI_OVERBOUGHT = 65;
+const SPOT_STOP_LOSS = -3;
+const SPOT_TRAILING_STOP = 1.5;
+const LEVERAGE = 2;
+```
+
+---
+
+## Project Structure
+
+```
+Polymarket Bot/
+├── README.md                 # This file
+├── ARCHITECTURE.md           # Technical deep-dive
+├── env.example               # Environment template
+│
+├── dashboard/
+│   └── build/
+│       └── index.html        # Live dashboard (deployed to Azure)
+│
+├── src/                      # Python arbitrage bot (optional)
+│   ├── main.py
+│   ├── arbitrage/
+│   ├── clients/
+│   └── ...
+│
+├── scripts/                  # Utility/test scripts (zzcur-* prefix)
+└── tests/
+```
+
+---
+
+## Monitoring
+
+The Edge Function runs automatically every minute. To check status:
+
+```bash
+# Test the function
+curl https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal | jq
+
+# Check recent trades
+# Via Supabase Dashboard > Table Editor > paper_trades
+```
 
 ---
 
@@ -279,4 +256,4 @@ MIT
 
 ## Disclaimer
 
-This is for educational purposes only. Paper trading simulates trades without real money. Never invest more than you can afford to lose.
+Paper trading only - no real money involved. For educational purposes.

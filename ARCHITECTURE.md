@@ -15,129 +15,171 @@ Technical architecture for the crypto paper trading system.
 │   │   ┌───────────────────┐         ┌───────────────────┐              │   │
 │   │   │   pg_cron         │         │   Edge Function   │              │   │
 │   │   │   (every minute)  │────────▶│   generate-live-  │              │   │
-│   │   │                   │         │   signal          │              │   │
+│   │   │                   │         │   signal (v13)    │              │   │
 │   │   └───────────────────┘         └───────────────────┘              │   │
 │   │                                         │                           │   │
-│   │                                         ▼                           │   │
-│   │   ┌───────────────────────────────────────────────────────────┐    │   │
-│   │   │                    PostgreSQL                              │    │   │
-│   │   │                                                            │    │   │
-│   │   │   paper_trades                                             │    │   │
-│   │   │   ├── Open positions (exit_time IS NULL)                   │    │   │
-│   │   │   └── Closed positions (with P&L, exit_reason)             │    │   │
-│   │   │                                                            │    │   │
-│   │   └───────────────────────────────────────────────────────────┘    │   │
+│   │                     ┌───────────────────┼───────────────────┐       │   │
+│   │                     ▼                   ▼                   ▼       │   │
+│   │              ┌───────────┐       ┌───────────┐       ┌───────────┐ │   │
+│   │              │ Binance   │       │ Polymarket│       │ PostgreSQL│ │   │
+│   │              │ API       │       │ Gamma API │       │           │ │   │
+│   │              │           │       │           │       │ paper_    │ │   │
+│   │              │ - 1m data │       │ - 15m odds│       │ trades    │ │   │
+│   │              │ - 15m data│       │ - BTC/ETH/│       │           │ │   │
+│   │              │ - prices  │       │   SOL     │       │           │ │   │
+│   │              └───────────┘       └───────────┘       └───────────┘ │   │
 │   │                                                                     │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                              │                                               │
-│   ┌──────────────────────────┼──────────────────────────────────────────┐   │
-│   │                          ▼                                          │   │
-│   │   ┌───────────────────┐         ┌───────────────────┐              │   │
-│   │   │   Azure Storage   │         │   Binance API     │              │   │
-│   │   │   (Dashboard)     │◀────────│   (Price Data)    │              │   │
-│   │   │                   │         │                   │              │   │
-│   │   │   - Polls every   │         │   - 1-min candles │              │   │
-│   │   │     5 seconds     │         │   - Current price │              │   │
-│   │   │   - Real-time P&L │         │                   │              │   │
-│   │   └───────────────────┘         └───────────────────┘              │   │
+│                              ▼                                               │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                 AZURE STATIC WEBSITE                                │   │
 │   │                                                                     │   │
-│   │                          EXTERNAL SERVICES                          │   │
+│   │   index.html (Dashboard)                                            │   │
+│   │   ├── Polls Edge Function every 5 seconds                          │   │
+│   │   ├── Fetches open/closed trades from Supabase REST API            │   │
+│   │   └── Displays real-time P&L, win rates, positions                 │   │
+│   │                                                                     │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## Two Trading Strategies
+
+### Strategy 1: Polymarket Binary (RSI Extreme 15m)
+
+**Backtest**: 54.0% win rate over 90 days (2,849 trades, +4% edge)
+
+```
+Trigger Conditions:
+├── RSI (15-min timeframe) < 25 → Bet UP
+└── RSI (15-min timeframe) > 75 → Bet DOWN
+
+Execution:
+├── Fetch real odds from Polymarket Gamma API
+├── Calculate bet odds based on direction (up/down price)
+├── Open position with confidence-scaled size
+└── Close exactly at 15 minutes
+
+P&L Calculation:
+├── WIN: pnl = (1/odds - 1) * 0.98 * stake  (2% fee deducted)
+└── LOSE: pnl = -stake (100% loss)
+```
+
+### Strategy 2: Spot Trading (RSI Mean Reversion 1m)
+
+**Uses 2x leverage with sophisticated exit management**
+
+```
+Trigger Conditions:
+├── RSI (1-min timeframe) < 35 → BUY (long)
+└── RSI (1-min timeframe) > 65 → SELL (short)
+
+Exit Conditions (first triggered wins):
+├── Stop Loss: leveraged P&L <= -3%
+├── Trailing Stop: P&L drops 1.5% from peak (after reaching +1.5%)
+├── Signal Exit: RSI returns to neutral zone (45-55)
+└── Max Hold: 2 hours elapsed
+```
+
+---
+
 ## Edge Function: generate-live-signal
 
-The core trading logic runs as a Supabase Edge Function (Deno/TypeScript).
-
-### Execution Flow
+### Execution Flow (Every Minute)
 
 ```
-Every Minute (pg_cron trigger):
-│
-├── 1. FETCH PRICE DATA
-│   └── Binance API → 60 x 1-min candles for BTC, ETH, SOL
-│
-├── 2. CALCULATE INDICATORS
-│   ├── RSI (14-period)
-│   └── EMA (8-period)
-│
-├── 3. GENERATE SIGNALS
-│   ├── RSI < 35 → UP signal
-│   ├── RSI > 65 → DOWN signal
-│   └── Else → NEUTRAL (no action)
-│
-├── 4. CLOSE POSITIONS
-│   │
-│   ├── 15-Min Binary (trade_type = 'polymarket')
-│   │   └── Close if elapsed >= 15 minutes
-│   │
-│   └── 2x Leverage (trade_type = 'leverage')
-│       ├── Stop Loss: leveraged P&L <= -3%
-│       ├── Trailing Stop: P&L drops 1.5% from peak
-│       ├── Signal Exit: RSI returns to neutral (45-55)
-│       └── Max Hold: elapsed >= 120 minutes
-│
-├── 5. OPEN NEW POSITIONS
-│   ├── Only if signal != NEUTRAL
-│   ├── Only if no existing position for asset+type
-│   └── Position size = Kelly-scaled by confidence
-│
-└── 6. RETURN STATS
-    └── JSON with signals, open/closed counts, P&L
+1. FETCH DATA (parallel)
+   ├── Binance 1-min candles (60 candles) → Spot RSI
+   ├── Binance 15-min candles (20 candles) → PM RSI
+   ├── Binance current prices
+   └── Polymarket Gamma API → Real 15-min odds
+
+2. GENERATE SIGNALS
+   ├── Spot: RSI < 35 = UP, RSI > 65 = DOWN
+   └── PM: RSI < 25 = UP, RSI > 75 = DOWN
+
+3. CLOSE POSITIONS
+   ├── Polymarket: Close if elapsed >= 15 minutes
+   │   └── Calculate binary win/loss based on price direction
+   └── Spot: Check all exit conditions
+       ├── Stop loss?
+       ├── Trailing stop?
+       ├── Signal reversal?
+       └── Max hold time?
+
+4. OPEN NEW POSITIONS
+   ├── Only if signal != NEUTRAL
+   ├── Only if no existing position for asset+type
+   └── Position size = Kelly-scaled by confidence
+
+5. RETURN JSON
+   └── Signals, stats, open/closed counts, P&L
 ```
 
-### Position Sizing Algorithm
+### Polymarket Odds Fetching
 
 ```typescript
-// Kelly-inspired position sizing
-function calcPositionSize(confidence: number): number {
-  const MIN_CONFIDENCE = 0.55;
-  const MAX_CONFIDENCE = 0.85;
-  const BASE_SIZE_PCT = 0.05;  // 5% at minimum
-  const MAX_SIZE_PCT = 0.25;   // 25% at maximum
-  const BANKROLL = 1000;
+// Construct slug for 15-min window
+const now = Math.floor(Date.now() / 1000);
+const windowTs = Math.floor(now / 900) * 900;  // Round to 15-min
+const slug = `btc-updown-15m-${windowTs}`;
 
-  // Normalize confidence to 0-1 range
-  const confNorm = Math.max(0, Math.min(1, 
-    (confidence - MIN_CONFIDENCE) / (MAX_CONFIDENCE - MIN_CONFIDENCE)
-  ));
+// Fetch from Gamma API
+const resp = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+const data = await resp.json();
+
+// Extract odds
+const prices = JSON.parse(data[0].markets[0].outcomePrices);
+const upOdds = parseFloat(prices[0]);   // e.g., 0.42
+const downOdds = parseFloat(prices[1]); // e.g., 0.58
+```
+
+### Position Sizing
+
+```typescript
+function calcPositionSize(confidence: number): number {
+  const BANKROLL = 1000;
+  const BASE = 0.05;  // 5% at 50% confidence
+  const MAX = 0.25;   // 25% at 85% confidence
   
-  // Linear interpolation
-  const sizePct = BASE_SIZE_PCT + (confNorm * (MAX_SIZE_PCT - BASE_SIZE_PCT));
+  const confNorm = (confidence - 0.5) / 0.35;  // Normalize to 0-1
+  const sizePct = BASE + (confNorm * (MAX - BASE));
   
   return Math.round(BANKROLL * sizePct);
 }
 
 // Examples:
-// 55% confidence → $50 (5%)
-// 70% confidence → $150 (15%)
-// 85% confidence → $250 (25%)
+// 55% → $50
+// 70% → $150
+// 85% → $250
 ```
 
-### Exit Strategy: Trailing Stop
+### Trailing Stop Implementation
 
 ```typescript
-// Track maximum P&L for each position
-const indicators = trade.indicators || {};
-const maxPnl = Math.max(indicators.max_pnl || 0, currentLeveragedPnl);
+// Track max P&L for each position
+const maxPnl = Math.max(trade.indicators?.max_pnl || 0, currentPnl);
 
-// Update max P&L in database
-if (currentLeveragedPnl > (indicators.max_pnl || 0)) {
+// Update in database
+if (currentPnl > (trade.indicators?.max_pnl || 0)) {
   await supabase.from("paper_trades").update({
-    indicators: { ...indicators, max_pnl: currentLeveragedPnl }
+    indicators: { ...indicators, max_pnl: currentPnl }
   }).eq("id", trade.id);
 }
 
-// Trailing stop triggers when:
-// 1. We've been profitable (maxPnl >= 1.5%)
-// 2. Current P&L drops 1.5% from peak
-if (maxPnl >= 1.5 && currentLeveragedPnl <= maxPnl - 1.5) {
+// Trigger trailing stop
+const TRAILING_STOP = 1.5;
+if (maxPnl >= TRAILING_STOP && currentPnl <= maxPnl - TRAILING_STOP) {
   shouldClose = true;
-  exitReason = `trailing_stop_peak${maxPnl.toFixed(1)}%`;
+  exitReason = 'trailing_stop';
 }
 ```
+
+---
 
 ## Database Schema
 
@@ -160,94 +202,126 @@ CREATE TABLE paper_trades (
     won BOOLEAN,
     
     -- Trade Metadata
-    confidence NUMERIC,            -- Signal confidence (0.5-0.85)
-    trade_type TEXT DEFAULT 'polymarket',  -- polymarket, leverage
-    exit_reason TEXT,              -- Why position closed
+    confidence NUMERIC,
+    trade_type TEXT,               -- 'polymarket' or 'spot'
+    exit_reason TEXT,
     
-    -- Indicators (JSONB for flexibility)
-    indicators JSONB,              -- { rsi, ema_distance, max_pnl, position_size }
+    -- Indicators (JSONB)
+    indicators JSONB,
+    -- For polymarket: { strategy, rsi_15m, bet_odds, position_size, potential_payout }
+    -- For spot: { strategy, rsi, ema_distance, max_pnl, position_size, leverage }
     
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for common queries
-CREATE INDEX idx_paper_trades_open ON paper_trades (exit_time) WHERE exit_time IS NULL;
-CREATE INDEX idx_paper_trades_type ON paper_trades (trade_type);
+-- Indexes
+CREATE INDEX idx_open ON paper_trades (exit_time) WHERE exit_time IS NULL;
+CREATE INDEX idx_type ON paper_trades (trade_type);
 ```
 
-### Exit Reason Values
+### exit_reason Values
 
-| exit_reason | Meaning |
-|-------------|---------|
-| `15min_expiry` | Binary trade closed at 15 minutes |
-| `trailing_stop_peak{X}%` | Trailing stop triggered after reaching X% peak |
-| `stop_loss_{X}%` | Hard stop loss at X% loss |
-| `signal_exit_RSI{X}` | Signal reversed, RSI at X |
-| `max_hold_2h` | Maximum 2-hour hold time reached |
+| Value | Meaning |
+|-------|---------|
+| `15min_expiry` | Polymarket bet closed at window end |
+| `trailing_stop` | Price dropped from peak |
+| `stop_loss` | Hit -3% stop |
+| `signal_exit` | RSI returned to neutral |
+| `max_hold_2h` | 2 hour limit reached |
 
-### Row Level Security
+---
+
+## Fees Calculation
+
+### Polymarket (Binary Bets)
+
+```typescript
+const PM_WIN_FEE = 0.02;  // 2% on winnings
+
+function calcPolymarketPayout(odds: number): number {
+  const grossPayout = (1 / odds) - 1;  // e.g., 1/0.4 - 1 = 1.5 = 150%
+  return grossPayout * (1 - PM_WIN_FEE);  // 1.5 * 0.98 = 1.47 = 147%
+}
+
+// If you bet $100 at 40% odds:
+// WIN: profit = $100 * 1.47 = $147
+// LOSE: loss = $100 (100%)
+```
+
+### Spot Trading
+
+```typescript
+const SPOT_TRADING_FEE = 0.001;  // 0.1% per trade
+const SPOT_SLIPPAGE = 0.0005;    // 0.05% estimate
+
+const totalFees = (SPOT_TRADING_FEE * 2 + SPOT_SLIPPAGE) * 100;
+// = (0.001 * 2 + 0.0005) * 100 = 0.25%
+
+function calcSpotPnlAfterFees(grossPnl: number): number {
+  return grossPnl - 0.25;  // Subtract 0.25% from gross P&L
+}
+```
+
+---
+
+## API Endpoints
+
+### Edge Function
+
+**URL**: `https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal`
+
+**Response**:
+```json
+{
+  "message": "PM: +1/-0 | Spot: +0/-1",
+  "signals": {
+    "BTC": {
+      "spot": { "direction": "NEUTRAL", "rsi": 52.3 },
+      "polymarket": { "direction": "UP", "rsi15m": 23.1 },
+      "currentPrice": 77500,
+      "pmOdds": { "up": 0.42, "down": 0.58 }
+    }
+  },
+  "polymarket": {
+    "strategy": "RSI Extreme (15m)",
+    "backtest": "54.0% over 90 days",
+    "open": 2,
+    "total": 15,
+    "wins": 9,
+    "pnl": 45.50,
+    "win_rate": "60.0%"
+  },
+  "spot": {
+    "strategy": "RSI Mean Reversion (1m)",
+    "open": 1,
+    "total": 20,
+    "wins": 17,
+    "pnl": 85.25,
+    "win_rate": "85.0%"
+  },
+  "timestamp": "2026-01-31T21:45:00.000Z"
+}
+```
+
+### Supabase REST API
+
+**Base**: `https://oukirnoonygvvctrjmih.supabase.co/rest/v1`
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /paper_trades?exit_time=is.null` | Open positions |
+| `GET /paper_trades?exit_time=not.is.null&order=exit_time.desc` | Closed trades |
+| `GET /paper_trades?trade_type=eq.polymarket` | Polymarket only |
+
+---
+
+## Cron Job
 
 ```sql
--- Allow public read access
-CREATE POLICY "public_read" ON paper_trades FOR SELECT USING (true);
-
--- Allow public insert (for Edge Functions with anon key)
-CREATE POLICY "public_insert" ON paper_trades FOR INSERT WITH CHECK (true);
-
--- Allow public update (for updating max_pnl, closing trades)
-CREATE POLICY "public_update" ON paper_trades FOR UPDATE USING (true);
-```
-
-## Dashboard Architecture
-
-Single-page HTML application with vanilla JavaScript.
-
-### Data Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     DASHBOARD (index.html)                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌───────────────────────────────────────────────────────┐    │
-│   │   Every 5 seconds:                                     │    │
-│   │                                                        │    │
-│   │   1. Fetch signals from Edge Function                  │    │
-│   │      GET /functions/v1/generate-live-signal            │    │
-│   │      → Current prices, RSI, signal direction           │    │
-│   │                                                        │    │
-│   │   2. Fetch open trades from Supabase                   │    │
-│   │      GET /rest/v1/paper_trades?exit_time=is.null       │    │
-│   │      → Calculate live P&L using current prices         │    │
-│   │                                                        │    │
-│   │   3. Fetch closed trades                               │    │
-│   │      GET /rest/v1/paper_trades?exit_time=not.is.null   │    │
-│   │      → Display history with exit reasons               │    │
-│   │                                                        │    │
-│   │   4. Update UI                                         │    │
-│   │      → Bankroll, P&L, win rate, positions              │    │
-│   └───────────────────────────────────────────────────────┘    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### UI Components
-
-| Component | Purpose |
-|-----------|---------|
-| Crypto Prices | BTC/ETH/SOL with RSI and signal badges |
-| Stats Bar | Bankroll, Total P&L, Unrealized, Win Rate |
-| 15-Min Binary | Open bets, countdown timer, recent results |
-| 2x Leverage | Open positions with live P&L, trailing stop progress |
-| Exit Breakdown | Count of exit types (trail/SL/signal) |
-
-## Cron Job Configuration
-
-```sql
--- Supabase pg_cron job
+-- Supabase pg_cron (runs every minute)
 SELECT cron.schedule(
   'generate-signals',
-  '* * * * *',  -- Every minute
+  '* * * * *',
   $$
   SELECT net.http_post(
     url := 'https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal',
@@ -257,158 +331,84 @@ SELECT cron.schedule(
 );
 ```
 
-## API Endpoints
+---
 
-### Edge Function: generate-live-signal
+## Dashboard Data Flow
 
-**URL:** `https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal`
+```
+Every 5 seconds:
 
-**Method:** GET
+1. Fetch signals from Edge Function
+   GET /functions/v1/generate-live-signal
+   → Current prices, RSI, PM odds, signal directions
 
-**Response:**
-```json
-{
-  "message": "PM: +1/-0 | LV: +1/-0",
-  "signals": {
-    "BTC": {
-      "direction": "UP",
-      "confidence": 0.65,
-      "rsi": 32,
-      "emaDistance": -0.3,
-      "currentPrice": 98500,
-      "positionSize": 100
-    },
-    "ETH": { ... },
-    "SOL": { ... }
-  },
-  "polymarket": {
-    "open": 2,
-    "total": 15,
-    "wins": 9,
-    "pnl": 12.50,
-    "win_rate": "60.0%"
-  },
-  "leverage": {
-    "open": 1,
-    "total": 8,
-    "wins": 5,
-    "pnl": 8.75,
-    "win_rate": "62.5%",
-    "trailingStops": 3,
-    "stopLosses": 1,
-    "signalExits": 2
-  },
-  "settings": {
-    "position_sizing": "5%-25% of bankroll",
-    "confidence_range": "55%-85%"
-  },
-  "timestamp": "2026-01-31T20:30:00.000Z"
-}
+2. Fetch open trades from Supabase
+   GET /rest/v1/paper_trades?exit_time=is.null
+   → Calculate live P&L using current prices
+
+3. Fetch closed trades
+   GET /rest/v1/paper_trades?exit_time=not.is.null&limit=20
+   → Display history with win/loss
+
+4. Update UI
+   → Prices, RSI badges, P&L, win rates
 ```
 
-### Supabase REST API
+---
 
-**Base URL:** `https://oukirnoonygvvctrjmih.supabase.co/rest/v1`
-
-**Headers:**
-```
-apikey: <SUPABASE_ANON_KEY>
-Authorization: Bearer <SUPABASE_ANON_KEY>
-```
-
-**Endpoints:**
-| Query | Purpose |
-|-------|---------|
-| `GET /paper_trades?exit_time=is.null` | Open positions |
-| `GET /paper_trades?exit_time=not.is.null&order=exit_time.desc&limit=10` | Recent closed |
-| `GET /paper_trades?trade_type=eq.leverage` | Leverage trades only |
-
-## Performance Characteristics
-
-| Metric | Value |
-|--------|-------|
-| Signal generation | ~500ms (3 symbols parallel) |
-| Database queries | ~50ms per query |
-| Dashboard refresh | Every 5 seconds |
-| Cron execution | Every 60 seconds |
-| Price staleness | Max 60 seconds |
-
-## Error Handling
-
-### Edge Function
-
-```typescript
-try {
-  // Main logic
-} catch (error) {
-  console.error("Error:", error);
-  return new Response(
-    JSON.stringify({ error: error.message }),
-    { 
-      status: 500, 
-      headers: { 
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*" 
-      } 
-    }
-  );
-}
-```
+## Deployment
 
 ### Dashboard
 
-```javascript
-try {
-  const resp = await fetch(url);
-  const data = await resp.json();
-  // Update UI
-} catch (err) {
-  console.error('Error:', err);
-  // UI shows last known state
-}
+```bash
+az storage blob upload \
+  --account-name polymktdash097744 \
+  --container-name '$web' \
+  --name index.html \
+  --file dashboard/build/index.html \
+  --content-type "text/html" \
+  --overwrite
 ```
 
-## Security Considerations
+### Edge Function
+
+Via Supabase CLI:
+```bash
+supabase functions deploy generate-live-signal --project-ref oukirnoonygvvctrjmih
+```
+
+Or via Supabase MCP tools (used in this project).
+
+---
+
+## Monitoring & Debugging
+
+### Check Function Status
+
+```bash
+curl -s https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal | jq '.message'
+```
+
+### Check Recent Trades
+
+```bash
+curl -s "https://oukirnoonygvvctrjmih.supabase.co/rest/v1/paper_trades?order=created_at.desc&limit=5" \
+  -H "apikey: YOUR_ANON_KEY" | jq
+```
+
+### Supabase Dashboard
+
+- **Table Editor**: View/edit paper_trades
+- **Edge Functions**: View logs, deployments
+- **SQL Editor**: Run queries
+
+---
+
+## Security
 
 | Aspect | Implementation |
 |--------|----------------|
-| API Keys | Supabase anon key (public, read-only) |
-| Edge Functions | verify_jwt disabled (public access) |
-| RLS Policies | Enabled, allow public read/write for paper trades |
-| CORS | `Access-Control-Allow-Origin: *` |
-| No Real Money | Paper trading only, no wallet connections |
-
-## Local Development
-
-### Test Edge Function Locally
-
-```bash
-# Install Supabase CLI
-npm install -g supabase
-
-# Start local Supabase
-supabase start
-
-# Serve function locally
-supabase functions serve generate-live-signal --env-file .env
-```
-
-### Test Dashboard Locally
-
-```bash
-# Simple HTTP server
-cd dashboard/build
-python -m http.server 8080
-# Open http://localhost:8080
-```
-
-## Deployment Checklist
-
-- [ ] Edge Function deployed to Supabase
-- [ ] pg_cron job scheduled
-- [ ] RLS policies enabled on paper_trades
-- [ ] Dashboard uploaded to Azure Storage
-- [ ] CORS headers set on Edge Function
-- [ ] Test signal generation working
-- [ ] Test position opening/closing
-- [ ] Verify dashboard displays data
+| API Keys | Supabase anon key (safe for client) |
+| Edge Function | verify_jwt=false (public) |
+| RLS | Enabled, public read/write for paper_trades |
+| No Real Money | Paper trading simulation only |
