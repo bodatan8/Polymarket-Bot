@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Trading Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #111827; color: #e2e8f0; font-family: system-ui, sans-serif; }
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .flash-green { animation: flashGreen 0.5s ease-out; }
+        .flash-red { animation: flashRed 0.5s ease-out; }
+        @keyframes flashGreen { 0% { background: rgba(34, 197, 94, 0.3); } 100% { background: transparent; } }
+        @keyframes flashRed { 0% { background: rgba(239, 68, 68, 0.3); } 100% { background: transparent; } }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+    </style>
+</head>
+<body class="min-h-screen p-4">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-2xl font-bold flex items-center gap-3">
+                    <span class="text-3xl">📊</span>
+                    Crypto Trading Dashboard
+                </h1>
+                <p class="text-gray-500 mt-1">Real Polymarket + Paper Trading</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">Last update</div>
+                    <div id="lastUpdate" class="text-sm text-gray-400">--:--:--</div>
+                </div>
+                <div class="w-3 h-3 bg-green-400 rounded-full pulse"></div>
+            </div>
+        </div>
+
+        <!-- Live Crypto Prices with 24h Change -->
+        <div class="flex gap-4 mb-6 flex-wrap" id="cryptoPrices">
+            <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
+                <span class="text-orange-400 font-bold">BTC</span>
+                <div>
+                    <div id="priceBTC" class="font-mono font-bold">$--</div>
+                    <div id="changeBTC" class="text-xs text-gray-500">--%</div>
+                </div>
+                <div id="rsiBTC" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
+            </div>
+            <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
+                <span class="text-blue-400 font-bold">ETH</span>
+                <div>
+                    <div id="priceETH" class="font-mono font-bold">$--</div>
+                    <div id="changeETH" class="text-xs text-gray-500">--%</div>
+                </div>
+                <div id="rsiETH" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
+            </div>
+            <div class="bg-gray-800/50 rounded-lg px-4 py-3 flex items-center gap-3">
+                <span class="text-purple-400 font-bold">SOL</span>
+                <div>
+                    <div id="priceSOL" class="font-mono font-bold">$--</div>
+                    <div id="changeSOL" class="text-xs text-gray-500">--%</div>
+                </div>
+                <div id="rsiSOL" class="text-xs px-2 py-1 rounded bg-gray-700">RSI --</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex gap-6 border-b border-gray-700 mb-6">
+            <button id="tabPolymarket" class="pb-3 px-2 text-lg font-medium tab-active" onclick="switchTab('polymarket')">
+                🎲 Real Polymarket
+            </button>
+            <button id="tabPaper" class="pb-3 px-2 text-lg font-medium text-gray-500 hover:text-gray-300" onclick="switchTab('paper')">
+                📈 Paper Trading
+            </button>
+        </div>
+
+        <!-- Polymarket Tab -->
+        <div id="polymarketTab">
+            <!-- Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Markets Tracked</div>
+                    <div id="pmMarketsCount" class="text-xl font-bold text-purple-400">0</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">With Signal</div>
+                    <div id="pmWithSignal" class="text-xl font-bold text-green-400">0</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">History Points</div>
+                    <div id="pmHistoryPoints" class="text-xl font-bold">0</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Data Source</div>
+                    <div class="text-lg font-bold text-blue-400">Polymarket API</div>
+                </div>
+            </div>
+
+            <!-- Markets Table -->
+            <div class="bg-gray-800/30 rounded-xl overflow-hidden border border-gray-700/50">
+                <div class="p-4 border-b border-gray-700/50">
+                    <h3 class="font-bold">Active Crypto Markets</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-900/50 text-gray-400 text-xs uppercase">
+                            <tr>
+                                <th class="px-4 py-3 text-left">Market</th>
+                                <th class="px-4 py-3 text-left">Outcomes</th>
+                                <th class="px-4 py-3 text-right">Volume</th>
+                                <th class="px-4 py-3 text-center">Signal</th>
+                                <th class="px-4 py-3 text-center">Recommendation</th>
+                                <th class="px-4 py-3 text-left">Reasoning</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pmMarketsTable">
+                            <tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Loading markets...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Backtest Results -->
+            <div class="mt-6 bg-yellow-900/20 border border-yellow-500/30 rounded-xl p-4">
+                <h3 class="font-bold text-yellow-400 mb-2">Backtest Results (1 month, 4,458 data points)</h3>
+                <div class="grid md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <p class="text-gray-400 mb-2">RSI Mean-Reversion on "BTC $80k or $150k":</p>
+                        <ul class="text-gray-500 space-y-1">
+                            <li>• RSI 40/60: 15.8% accuracy, -$58</li>
+                            <li>• RSI 35/65: 15.6% accuracy, -$63</li>
+                            <li>• RSI 30/70: 15.7% accuracy, -$69</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p class="text-yellow-300 mb-2">Insight:</p>
+                        <p class="text-gray-400">RSI works poorly on long-term structural bets. Better suited for short-term 15-min binary windows (paper trading simulation).</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Source Info -->
+            <div class="mt-4 bg-blue-900/20 border border-blue-500/30 rounded-xl p-4">
+                <h3 class="font-bold text-blue-400 mb-2">Data Sources</h3>
+                <p class="text-sm text-gray-400">
+                    Using Polymarket CLOB API (4,458 points). For 1-min resolution: 
+                    <a href="https://polymarketdata.co" target="_blank" class="text-blue-400 underline">polymarketdata.co</a> (5B+ rows).
+                </p>
+            </div>
+        </div>
+
+        <!-- Paper Trading Tab -->
+        <div id="paperTab" class="hidden">
+            <!-- Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Bankroll</div>
+                    <div id="bankroll" class="text-xl font-bold text-blue-400">$1,000</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Realized P&L</div>
+                    <div id="realizedPnl" class="text-xl font-bold">$0.00</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Unrealized P&L</div>
+                    <div id="unrealizedPnl" class="text-xl font-bold text-yellow-400">$0.00</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Win Rate</div>
+                    <div id="winRate" class="text-xl font-bold">--%</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Total Trades</div>
+                    <div id="totalTrades" class="text-xl font-bold">0</div>
+                </div>
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                    <div class="text-gray-400 text-xs uppercase">Open Positions</div>
+                    <div id="openTrades" class="text-xl font-bold text-yellow-400">0</div>
+                </div>
+            </div>
+
+            <!-- Split: Polymarket Sim vs Leverage -->
+            <div class="grid lg:grid-cols-2 gap-6">
+                <!-- Polymarket Simulation -->
+                <div class="border-2 border-purple-500/50 bg-purple-500/5 rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-bold">🎲 15-Min Binary (Simulated)</h2>
+                        <div id="pmPnl" class="font-bold text-green-400">$0.00</div>
+                    </div>
+                    <div class="text-xs text-purple-300 mb-3">Fixed 15-min window • Binary outcome</div>
+                    <div id="pmOpenPositions" class="space-y-2 mb-4 max-h-48 overflow-y-auto">
+                        <div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open bets</div>
+                    </div>
+                    <div id="pmClosedPositions" class="space-y-2 max-h-32 overflow-y-auto">
+                        <div class="text-center py-2 text-gray-500 text-sm">No results yet</div>
+                    </div>
+                </div>
+
+                <!-- Leverage Trading -->
+                <div class="border-2 border-orange-500/50 bg-orange-500/5 rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-bold">🚀 2x Leverage (Live P&L)</h2>
+                        <div id="lvPnl" class="font-bold text-green-400">$0.00</div>
+                    </div>
+                    <div class="text-xs text-orange-300 mb-3">Trailing stop 1.5% • SL -3% • Signal exit</div>
+                    <div id="lvOpenPositions" class="space-y-2 mb-4 max-h-48 overflow-y-auto">
+                        <div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open positions</div>
+                    </div>
+                    <div id="lvClosedPositions" class="space-y-2 max-h-32 overflow-y-auto">
+                        <div class="text-center py-2 text-gray-500 text-sm">No results yet</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-8 text-center text-gray-600 text-sm">
+            <div>Auto-updates every 10 seconds • Prices every 2 seconds</div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://oukirnoonygvvctrjmih.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im91a2lybm9vbnlndnZjdHJqbWloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc3MzA3NTgsImV4cCI6MjA3MzMwNjc1OH0.8CFre4n9P2i8sQZtIBlhbdHa8x3NXAabIxfPi_1yaH4';
+        const SIGNAL_URL = `${SUPABASE_URL}/functions/v1/generate-live-signal`;
+        const SCANNER_URL = `${SUPABASE_URL}/functions/v1/polymarket-scanner`;
+        
+        const STARTING_BANKROLL = 1000;
+        const POSITION_SIZE = 50;
+        const LEVERAGE = 2;
+        
+        let currentPrices = {};
+        let currentTab = 'polymarket';
+        
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('polymarketTab').classList.toggle('hidden', tab !== 'polymarket');
+            document.getElementById('paperTab').classList.toggle('hidden', tab !== 'paper');
+            document.getElementById('tabPolymarket').classList.toggle('tab-active', tab === 'polymarket');
+            document.getElementById('tabPolymarket').classList.toggle('text-gray-500', tab !== 'polymarket');
+            document.getElementById('tabPaper').classList.toggle('tab-active', tab === 'paper');
+            document.getElementById('tabPaper').classList.toggle('text-gray-500', tab !== 'paper');
+        }
+        
+        function formatPnl(pnl) {
+            const sign = pnl >= 0 ? '+' : '';
+            return `${sign}$${pnl.toFixed(2)}`;
+        }
+        
+        function formatPnlPercent(pct) {
+            const sign = pct >= 0 ? '+' : '';
+            return `${sign}${pct.toFixed(2)}%`;
+        }
+
+        function getRsiBadgeClass(rsi) {
+            if (rsi < 35) return 'bg-green-500/20 text-green-400';
+            if (rsi > 65) return 'bg-red-500/20 text-red-400';
+            return 'bg-gray-700 text-gray-400';
+        }
+
+        function getRecommendationBadge(rec) {
+            if (rec === 'HOLD') return '<span class="px-2 py-1 rounded bg-gray-700 text-gray-400">HOLD</span>';
+            if (rec === 'MONITOR') return '<span class="px-2 py-1 rounded bg-blue-500/20 text-blue-400">MONITOR</span>';
+            if (rec.includes('BET')) return `<span class="px-2 py-1 rounded bg-green-500/20 text-green-400">${rec}</span>`;
+            return `<span class="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400">${rec}</span>`;
+        }
+
+        async function fetchPolymarketData() {
+            try {
+                const resp = await fetch(SCANNER_URL);
+                const data = await resp.json();
+                
+                // Update signals
+                if (data.signals) {
+                    for (const asset of ['BTC', 'ETH', 'SOL']) {
+                        const sig = data.signals[asset];
+                        if (sig) {
+                            document.getElementById('price' + asset).textContent = '$' + sig.price.toLocaleString();
+                            document.getElementById('change' + asset).textContent = formatPnlPercent(sig.change24h);
+                            document.getElementById('change' + asset).className = `text-xs ${sig.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`;
+                            
+                            const rsiEl = document.getElementById('rsi' + asset);
+                            rsiEl.textContent = `RSI ${sig.rsi.toFixed(0)}`;
+                            rsiEl.className = `text-xs px-2 py-1 rounded ${getRsiBadgeClass(sig.rsi)}`;
+                            
+                            currentPrices[asset + 'USDT'] = sig.price;
+                        }
+                    }
+                }
+                
+                // Update stats
+                document.getElementById('pmMarketsCount').textContent = data.stats?.marketsTracked || 0;
+                document.getElementById('pmWithSignal').textContent = data.stats?.withRecommendation || 0;
+                
+                let totalHistory = 0;
+                if (data.markets) {
+                    totalHistory = data.markets.reduce((sum, m) => sum + (m.historyPoints || 0), 0);
+                }
+                document.getElementById('pmHistoryPoints').textContent = totalHistory.toLocaleString();
+                
+                // Update markets table
+                if (data.markets && data.markets.length > 0) {
+                    document.getElementById('pmMarketsTable').innerHTML = data.markets.map(m => `
+                        <tr class="border-b border-gray-700/30 hover:bg-gray-800/30">
+                            <td class="px-4 py-3">
+                                <div class="font-medium">${m.question}</div>
+                                <div class="text-xs text-gray-500">Ends: ${m.endDate}</div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="space-y-1">
+                                    ${m.outcomes.map((o, i) => `
+                                        <div class="flex justify-between text-xs">
+                                            <span>${o}</span>
+                                            <span class="font-mono ${m.prices[i].startsWith('100') || m.prices[i].startsWith('99') ? 'text-green-400' : ''}">${m.prices[i]}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 text-right font-mono">${m.volume}</td>
+                            <td class="px-4 py-3 text-center">
+                                <span class="px-2 py-1 rounded ${m.signal === 'BULLISH' ? 'bg-green-500/20 text-green-400' : m.signal === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-400'}">
+                                    ${m.signal} (RSI ${m.rsi})
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-center">${getRecommendationBadge(m.recommendation)}</td>
+                            <td class="px-4 py-3 text-xs text-gray-400">${m.reasoning}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    document.getElementById('pmMarketsTable').innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">No markets found</td></tr>';
+                }
+                
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            } catch (err) {
+                console.error('Polymarket fetch error:', err);
+            }
+        }
+
+        async function fetchPaperTrades() {
+            try {
+                const headers = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` };
+                
+                const pmOpenResp = await fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.polymarket&exit_time=is.null&order=entry_time.desc`, { headers });
+                const pmOpen = await pmOpenResp.json();
+                
+                const pmClosedResp = await fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.polymarket&exit_time=not.is.null&order=exit_time.desc&limit=5`, { headers });
+                const pmClosed = await pmClosedResp.json();
+                
+                const lvOpenResp = await fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.leverage&exit_time=is.null&order=entry_time.desc`, { headers });
+                const lvOpen = await lvOpenResp.json();
+                
+                const lvClosedResp = await fetch(`${SUPABASE_URL}/rest/v1/paper_trades?trade_type=eq.leverage&exit_time=not.is.null&order=exit_time.desc&limit=5`, { headers });
+                const lvClosed = await lvClosedResp.json();
+                
+                // Render positions
+                document.getElementById('pmOpenPositions').innerHTML = pmOpen.length > 0
+                    ? pmOpen.map(t => renderPosition(t, true, 'pm')).join('')
+                    : '<div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open bets</div>';
+                    
+                document.getElementById('pmClosedPositions').innerHTML = pmClosed.length > 0
+                    ? pmClosed.map(t => renderPosition(t, false, 'pm')).join('')
+                    : '<div class="text-center py-2 text-gray-500 text-sm">No results yet</div>';
+                
+                document.getElementById('lvOpenPositions').innerHTML = lvOpen.length > 0
+                    ? lvOpen.map(t => renderPosition(t, true, 'lv')).join('')
+                    : '<div class="text-center py-3 text-gray-500 text-sm bg-gray-900/30 rounded-lg">No open positions</div>';
+                    
+                document.getElementById('lvClosedPositions').innerHTML = lvClosed.length > 0
+                    ? lvClosed.map(t => renderPosition(t, false, 'lv')).join('')
+                    : '<div class="text-center py-2 text-gray-500 text-sm">No results yet</div>';
+                
+                // Stats
+                const allClosed = [...pmClosed, ...lvClosed];
+                const wins = allClosed.filter(t => t.won).length;
+                const winRate = allClosed.length > 0 ? (wins / allClosed.length * 100).toFixed(1) : '--';
+                
+                let pmPnl = 0, lvPnl = 0;
+                pmClosed.forEach(t => { pmPnl += (parseFloat(t.pnl_percent) || 0) / 100 * POSITION_SIZE; });
+                lvClosed.forEach(t => { lvPnl += (parseFloat(t.pnl_percent) || 0) / 100 * POSITION_SIZE; });
+                
+                document.getElementById('bankroll').textContent = '$' + (STARTING_BANKROLL + pmPnl + lvPnl).toFixed(2);
+                document.getElementById('realizedPnl').textContent = formatPnl(pmPnl + lvPnl);
+                document.getElementById('realizedPnl').className = `text-xl font-bold ${(pmPnl + lvPnl) >= 0 ? 'text-green-400' : 'text-red-400'}`;
+                document.getElementById('winRate').textContent = winRate + '%';
+                document.getElementById('totalTrades').textContent = allClosed.length;
+                document.getElementById('openTrades').textContent = pmOpen.length + lvOpen.length;
+                
+                document.getElementById('pmPnl').textContent = formatPnl(pmPnl);
+                document.getElementById('pmPnl').className = `font-bold ${pmPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
+                document.getElementById('lvPnl').textContent = formatPnl(lvPnl);
+                document.getElementById('lvPnl').className = `font-bold ${lvPnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
+                
+            } catch (err) {
+                console.error('Paper trades fetch error:', err);
+            }
+        }
+
+        function renderPosition(trade, isOpen, type) {
+            const symbol = trade.asset.replace('USDT', '');
+            const isUp = trade.direction === 'UP';
+            const leverage = type === 'lv' ? LEVERAGE : 1;
+            
+            if (isOpen) {
+                const currentPrice = currentPrices[trade.asset];
+                const entryPrice = parseFloat(trade.entry_price);
+                let pnlPercent = currentPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+                if (trade.direction === 'DOWN') pnlPercent = -pnlPercent;
+                pnlPercent *= leverage;
+                const pnlDollar = (pnlPercent / 100) * POSITION_SIZE;
+                const isProfit = pnlDollar >= 0;
+                
+                return `
+                    <div class="p-2 rounded-lg border ${isProfit ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}">
+                        <div class="flex items-center justify-between">
+                            <span class="font-bold ${isUp ? 'text-green-400' : 'text-red-400'}">${symbol} ${trade.direction}</span>
+                            <span class="font-mono ${isProfit ? 'text-green-400' : 'text-red-400'}">${formatPnl(pnlDollar)}</span>
+                        </div>
+                        <div class="text-xs text-gray-500">$${POSITION_SIZE} @ $${entryPrice.toLocaleString()}</div>
+                    </div>
+                `;
+            } else {
+                const pnlPct = parseFloat(trade.pnl_percent) || 0;
+                const pnlDollar = (pnlPct / 100) * POSITION_SIZE;
+                const won = trade.won;
+                return `
+                    <div class="p-2 rounded-lg border ${won ? 'bg-green-900/20 border-green-700/30' : 'bg-red-900/20 border-red-700/30'} flex justify-between text-sm">
+                        <span class="${isUp ? 'text-green-400' : 'text-red-400'}">${symbol}</span>
+                        <span class="${won ? 'text-green-400' : 'text-red-400'}">${won ? '✅' : '❌'} ${formatPnl(pnlDollar)}</span>
+                    </div>
+                `;
+            }
+        }
+
+        // Initial load
+        fetchPolymarketData();
+        fetchPaperTrades();
+        
+        // Refresh intervals
+        setInterval(fetchPolymarketData, 10000);
+        setInterval(fetchPaperTrades, 10000);
+    </script>
+</body>
+</html>

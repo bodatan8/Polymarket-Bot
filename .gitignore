@@ -8,9 +8,15 @@ venv/
 .venv/
 .env
 
-# Data
+# Data & Output
 data/
+output/
 *.db
+
+# Backtest artifacts (regenerated)
+backtest_charts/
+*_results.csv
+*_signals.csv
 
 # Logs
 *.log
@@ -25,7 +31,7 @@ data/
 node_modules/
 dashboard/node_modules/
 dashboard/dist/
-dashboard/build/
+# Note: dashboard/build/ is NOT ignored - contains deployed static files
 
 # OS
 .DS_Store

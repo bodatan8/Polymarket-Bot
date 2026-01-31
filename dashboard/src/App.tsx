@@ -487,6 +487,41 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   
+  // Fetch dashboard data (only used in live mode)
+  useEffect(() => {
+    if (viewMode === 'paper') return
+    
+    const fetchData = async () => {
+      try {
+        const [dashResponse, signalsResponse] = await Promise.all([
+          fetch(`${API_URL}/api/dashboard`),
+          fetch(`${API_URL}/api/signals/live`)
+        ])
+        
+        if (!dashResponse.ok) throw new Error('Failed to fetch dashboard data')
+        const dashJson = await dashResponse.json()
+        setData(dashJson)
+        
+        if (signalsResponse.ok) {
+          const signalsJson = await signalsResponse.json()
+          setSignals(signalsJson)
+        }
+        
+        setError(null)
+        setLastUpdate(new Date())
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error')
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchData()
+    // Fetch every 5 seconds for live signals
+    const interval = setInterval(fetchData, 5000)
+    return () => clearInterval(interval)
+  }, [viewMode])
+  
   // If paper trading mode, render the PaperTrading component
   if (viewMode === 'paper') {
     return (
@@ -510,38 +545,6 @@ function App() {
     )
   }
 
-  const fetchData = async () => {
-    try {
-      const [dashResponse, signalsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/dashboard`),
-        fetch(`${API_URL}/api/signals/live`)
-      ])
-      
-      if (!dashResponse.ok) throw new Error('Failed to fetch dashboard data')
-      const dashJson = await dashResponse.json()
-      setData(dashJson)
-      
-      if (signalsResponse.ok) {
-        const signalsJson = await signalsResponse.json()
-        setSignals(signalsJson)
-      }
-      
-      setError(null)
-      setLastUpdate(new Date())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchData()
-    // Fetch every 5 seconds for live signals - faster to catch opportunities
-    const interval = setInterval(fetchData, 5000)
-    return () => clearInterval(interval)
-  }, [])
-
   if (loading) {
     return (
       <div className="min-h-screen bg-poly-dark flex items-center justify-center">
@@ -557,7 +560,7 @@ function App() {
         <div className="text-gray-400">{error}</div>
         <div className="text-sm text-gray-500">API: {API_URL}</div>
         <button 
-          onClick={() => { setLoading(true); fetchData(); }}
+          onClick={() => { setLoading(true); setError(null); }}
           className="mt-4 px-4 py-2 bg-poly-card border border-poly-border rounded-lg hover:bg-poly-border transition"
         >
           Retry

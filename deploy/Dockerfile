@@ -2,7 +2,7 @@
 # Multi-stage build for minimal image size
 
 # Stage 1: Build dependencies
-FROM python:3.11-slim as builder
+FROM python:3.12-slim as builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 
 
 # Stage 2: Production image
-FROM python:3.11-slim as production
+FROM python:3.12-slim as production
 
 WORKDIR /app
 

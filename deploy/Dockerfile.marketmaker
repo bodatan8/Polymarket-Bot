@@ -18,4 +18,4 @@ RUN mkdir -p /app/data
 ENV PYTHONUNBUFFERED=1
 
 # Run market maker
-CMD ["python", "-m", "src.market_maker.fifteen_min"]
+CMD ["python", "-m", "src.market_maker.maker"]

@@ -5,9 +5,11 @@ Includes full-stack component data and live prediction signals.
 import asyncio
 import aiohttp
 import json
+import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -18,16 +20,39 @@ from src.risk.manager import RiskManager, RiskLimits, RiskLevel
 from src.signals.live_predictor import LivePredictor, get_live_signal, PredictionDirection
 from src.signals.paper_trader import PaperTrader, TradeType, PaperRiskLimits
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="15-Min Market Maker Dashboard API")
 
-# Enable CORS for dashboard
+# CORS configuration - use environment variable for production
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions with consistent error response."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc),
+            "path": str(request.url.path)
+        }
+    )
 
 # Initialize shared components
 timing_optimizer = TimingOptimizer()
@@ -88,7 +113,7 @@ async def fetch_live_market_data(market_id: str) -> dict:
                         "down_price": float(prices[down_idx]) if down_idx < len(prices) else 0.5,
                     }
     except Exception as e:
-        print(f"Error fetching market {market_id}: {e}")
+        logger.error(f"Error fetching market {market_id}: {e}")
     return {"up_price": 0.5, "down_price": 0.5}
 
 
@@ -107,7 +132,7 @@ async def fetch_crypto_prices() -> dict:
                         "XRP": data.get("ripple", {}).get("usd", 0),
                     }
     except Exception as e:
-        print(f"Error fetching crypto prices: {e}")
+        logger.error(f"Error fetching crypto prices: {e}")
     return {"BTC": 0, "ETH": 0, "SOL": 0, "XRP": 0}
 
 
@@ -419,6 +444,8 @@ async def api_dashboard():
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):
     """Run the API server."""
+    logger.info(f"Starting API server on {host}:{port}")
+    logger.info(f"CORS origins: {ALLOWED_ORIGINS}")
     uvicorn.run(app, host=host, port=port)
 
 

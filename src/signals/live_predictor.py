@@ -80,9 +80,10 @@ class LivePredictor:
     RSI_VERY_OVERBOUGHT = 75
     EMA_DISTANCE_HIGH = 0.5
     
-    def __init__(self, binance_api_url: str = "https://api.binance.com"):
+    def __init__(self, binance_api_url: str = "https://api.binance.com", session: Optional[aiohttp.ClientSession] = None):
         self.binance_url = binance_api_url
         self._price_cache: Dict[str, List[Dict]] = {}
+        self._session = session  # Reusable session for speed
     
     async def fetch_recent_candles(
         self, 
@@ -98,7 +99,15 @@ class LivePredictor:
             "limit": limit
         }
         
-        async with aiohttp.ClientSession() as session:
+        # Use provided session or create one
+        if self._session and not self._session.closed:
+            session = self._session
+            close_session = False
+        else:
+            session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
+            close_session = True
+        
+        try:
             async with session.get(url, params=params) as resp:
                 if resp.status != 200:
                     logger.error(f"Binance API error: {resp.status}")
@@ -118,6 +127,9 @@ class LivePredictor:
                     })
                 
                 return candles
+        finally:
+            if close_session:
+                await session.close()
     
     def _calc_rsi(self, closes: List[float], period: int = 14) -> float:
         """Calculate RSI from close prices."""

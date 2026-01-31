@@ -360,3 +360,60 @@ class GammaClient:
                 if token.token_id == token_id:
                     return market
         return None
+
+    async def fetch_crypto_markets(self, limit: int = 200) -> list[Market]:
+        """
+        Fetch crypto-related markets from Polymarket.
+        
+        Returns:
+            List of markets related to crypto (BTC, ETH, SOL, etc.)
+        """
+        markets = []
+        
+        # Try fetching with crypto tag first
+        try:
+            data = await self._request(
+                "/markets",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "limit": limit,
+                    "tag": "crypto"
+                }
+            )
+            
+            for market_data in data:
+                market = self._parse_market(market_data)
+                markets.append(market)
+                self._markets_cache[market.condition_id] = market
+                
+        except Exception as e:
+            logger.warning(f"Failed to fetch crypto tag markets: {e}")
+        
+        # Also search by keywords
+        crypto_keywords = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol"]
+        
+        try:
+            all_markets = await self._request(
+                "/markets",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "limit": 500
+                }
+            )
+            
+            for market_data in all_markets:
+                question = market_data.get("question", "").lower()
+                if any(kw in question for kw in crypto_keywords):
+                    market = self._parse_market(market_data)
+                    # Avoid duplicates
+                    if market.condition_id not in [m.condition_id for m in markets]:
+                        markets.append(market)
+                        self._markets_cache[market.condition_id] = market
+                        
+        except Exception as e:
+            logger.warning(f"Failed to fetch keyword markets: {e}")
+        
+        logger.info(f"Found {len(markets)} crypto markets")
+        return markets

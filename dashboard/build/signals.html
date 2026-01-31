@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket Live Signals</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f172a; color: #e2e8f0; font-family: system-ui, sans-serif; }
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+    </style>
+</head>
+<body class="min-h-screen p-6">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-3xl font-bold">📊 Live Trading Signals</h1>
+                <p class="text-gray-400 mt-1">Mean Reversion Strategy | 7-min predictions | ~62% accuracy</p>
+            </div>
+            <div class="text-right">
+                <div class="text-sm text-gray-500">Last Update</div>
+                <div id="lastUpdate" class="text-lg font-mono">--:--:--</div>
+                <div class="w-3 h-3 bg-green-400 rounded-full pulse inline-block ml-2"></div>
+            </div>
+        </div>
+
+        <div id="signals" class="grid md:grid-cols-3 gap-6 mb-8">
+            <!-- Signals will be inserted here -->
+        </div>
+
+        <div class="bg-slate-800/50 rounded-xl p-6 mb-8">
+            <h2 class="text-xl font-bold mb-4">Strategy Rules</h2>
+            <div class="grid md:grid-cols-2 gap-4 text-sm text-gray-300">
+                <div>
+                    <h3 class="font-bold text-green-400 mb-2">📈 BUY Signal (Predict UP)</h3>
+                    <ul class="space-y-1">
+                        <li>• RSI &lt; 35 (oversold)</li>
+                        <li>• Price 0.4%+ below EMA8</li>
+                        <li>• High volatility (1.3x+ ATR)</li>
+                        <li>• Good hours: 4, 9, 11, 20, 21 UTC</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="font-bold text-red-400 mb-2">📉 SELL Signal (Predict DOWN)</h3>
+                    <ul class="space-y-1">
+                        <li>• RSI &gt; 65 (overbought)</li>
+                        <li>• Price 0.4%+ above EMA8</li>
+                        <li>• High volatility (1.3x+ ATR)</li>
+                        <li>• Good hours: 4, 9, 11, 20, 21 UTC</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-slate-800/50 rounded-xl p-6">
+            <h2 class="text-xl font-bold mb-4">Signal History</h2>
+            <div id="history" class="space-y-2 max-h-64 overflow-y-auto">
+                <div class="text-gray-500 text-center py-4">Waiting for signals...</div>
+            </div>
+        </div>
+
+        <div class="mt-8 text-center text-gray-600 text-sm">
+            Paper Trading Mode - No Real Money | Auto-refresh every 10s
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal';
+        let signalHistory = [];
+
+        function formatTime(isoString) {
+            return new Date(isoString).toLocaleTimeString();
+        }
+
+        function renderSignal(symbol, signal) {
+            const isUp = signal.direction === 'UP';
+            const isDown = signal.direction === 'DOWN';
+            const hasSignal = signal.direction !== 'NO_SIGNAL';
+            
+            const bgColor = hasSignal 
+                ? (isUp ? 'border-green-500 bg-green-900/20' : 'border-red-500 bg-red-900/20')
+                : 'border-gray-700 bg-slate-800/50';
+            
+            const symbolColors = {
+                'BTC': 'bg-orange-500',
+                'ETH': 'bg-blue-500',
+                'SOL': 'bg-purple-500'
+            };
+
+            return `
+                <div class="rounded-xl border-2 p-5 ${bgColor}">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-12 h-12 rounded-full ${symbolColors[symbol] || 'bg-gray-600'} flex items-center justify-center font-bold">
+                                ${symbol}
+                            </div>
+                            <div>
+                                <div class="font-bold text-xl">${symbol}/USDT</div>
+                                <div class="text-gray-400 text-sm">7-min prediction</div>
+                            </div>
+                        </div>
+                        ${hasSignal ? `
+                            <div class="px-4 py-2 rounded-full text-lg font-bold ${isUp ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'}">
+                                ${signal.direction} ${isUp ? '📈' : '📉'}
+                            </div>
+                        ` : `
+                            <div class="px-4 py-2 rounded-full text-lg font-bold bg-gray-700 text-gray-400">
+                                WAITING ⏳
+                            </div>
+                        `}
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3 mb-4">
+                        <div class="bg-black/30 rounded-lg p-3">
+                            <div class="text-gray-500 text-xs">RSI (14)</div>
+                            <div class="font-mono text-xl ${signal.rsi < 35 ? 'text-green-400' : signal.rsi > 65 ? 'text-red-400' : ''}">
+                                ${signal.rsi?.toFixed(1) || '-'}
+                            </div>
+                        </div>
+                        <div class="bg-black/30 rounded-lg p-3">
+                            <div class="text-gray-500 text-xs">EMA8 Distance</div>
+                            <div class="font-mono text-xl ${signal.ema8_distance < -0.3 ? 'text-green-400' : signal.ema8_distance > 0.3 ? 'text-red-400' : ''}">
+                                ${signal.ema8_distance?.toFixed(2) || '-'}%
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${hasSignal ? `
+                        <div class="grid grid-cols-2 gap-3 mb-4">
+                            <div class="bg-black/30 rounded-lg p-3">
+                                <div class="text-gray-500 text-xs">Confidence</div>
+                                <div class="font-mono text-xl text-yellow-400">${(signal.confidence * 100).toFixed(0)}%</div>
+                            </div>
+                            <div class="bg-black/30 rounded-lg p-3">
+                                <div class="text-gray-500 text-xs">Est. Accuracy</div>
+                                <div class="font-mono text-xl text-green-400">${(signal.accuracy_estimate * 100).toFixed(0)}%</div>
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="text-sm text-gray-400 truncate">${signal.reasoning || 'No signal conditions met'}</div>
+                </div>
+            `;
+        }
+
+        function addToHistory(signal) {
+            if (signal.direction !== 'NO_SIGNAL') {
+                signalHistory.unshift({
+                    ...signal,
+                    recordedAt: new Date().toISOString()
+                });
+                if (signalHistory.length > 20) signalHistory.pop();
+                
+                const historyEl = document.getElementById('history');
+                if (signalHistory.length > 0) {
+                    historyEl.innerHTML = signalHistory.map(s => `
+                        <div class="flex items-center justify-between p-3 bg-black/20 rounded-lg">
+                            <div class="flex items-center gap-3">
+                                <span class="font-bold">${s.symbol.replace('USDT', '')}</span>
+                                <span class="${s.direction === 'UP' ? 'text-green-400' : 'text-red-400'} font-bold">
+                                    ${s.direction}
+                                </span>
+                            </div>
+                            <div class="text-gray-500 text-sm">${formatTime(s.recordedAt)}</div>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+
+        async function fetchSignals() {
+            try {
+                const response = await fetch(SUPABASE_URL);
+                const data = await response.json();
+                
+                const signalsEl = document.getElementById('signals');
+                signalsEl.innerHTML = data.signals.map(s => renderSignal(s.symbol.replace('USDT', ''), s)).join('');
+                
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                
+                // Add to history
+                data.signals.forEach(s => addToHistory(s));
+                
+            } catch (err) {
+                console.error('Error fetching signals:', err);
+            }
+        }
+
+        // Initial fetch and interval
+        fetchSignals();
+        setInterval(fetchSignals, 10000);
+    </script>
+</body>
+</html>

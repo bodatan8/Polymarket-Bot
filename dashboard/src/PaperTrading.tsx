@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const SUPABASE_FUNCTION_URL = 'https://oukirnoonygvvctrjmih.supabase.co/functions/v1/generate-live-signal'
 
 interface PaperPosition {
   id: string
@@ -332,7 +333,8 @@ export default function PaperTrading() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 5000)
+    // Poll every 30 seconds - dashboard is just for display
+    const interval = setInterval(fetchData, 30000)
     return () => clearInterval(interval)
   }, [])
 
