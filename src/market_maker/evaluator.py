@@ -16,6 +16,7 @@ from src.prediction.dynamic_edge import DynamicEdgeCalculator
 from src.prediction.calibrator import ProbabilityCalibrator
 from src.learning.timing_optimizer import TimingOptimizer, TimingDecision
 from src.market_maker.models import FifteenMinMarket
+from src.market_maker.probability_engine import ProbabilityEngine
 
 
 @dataclass
@@ -144,13 +145,16 @@ class SignalFilter(MarketFilter):
                     reason=f"Signal strength {ctx.aggregated_signal.strength*100:.1f}% < HF min {self.cfg.hf_min_signal_strength*100:.1f}%"
                 )
             
-            # Market uncertainty check
-            market_uncertainty = abs(ctx.market.up_price - 0.5)
-            if market_uncertainty > self.cfg.hf_min_market_uncertainty:
-                return FilterResult(
-                    passed=False,
-                    reason=f"Market too certain ({ctx.market.up_price*100:.1f}¢)"
-                )
+            # Market uncertainty check: reject markets that are too far from 50/50
+            # (too certain = one side heavily favored, less opportunity)
+            # NOTE: Disabled in HF mode for maximum opportunities
+            if not self.cfg.high_frequency_mode:
+                market_uncertainty = abs(ctx.market.up_price - 0.5)
+                if market_uncertainty > self.cfg.hf_min_market_uncertainty:
+                    return FilterResult(
+                        passed=False,
+                        reason=f"Market too skewed ({ctx.market.up_price*100:.1f}¢/{ctx.market.down_price*100:.1f}¢) - need closer to 50/50"
+                    )
         
         return FilterResult(passed=True)
 
@@ -231,6 +235,9 @@ class MarketEvaluator:
         self.signal_aggregator = signal_aggregator
         self.edge_calculator = edge_calculator
         self.calibrator = calibrator
+        
+        # Probability engine (centralized math)
+        self.probability_engine = ProbabilityEngine(calibrator)
     
     def evaluate(
         self,
@@ -262,11 +269,17 @@ class MarketEvaluator:
             momentum_data=ctx.momentum
         )
         
-        # Calculate edge
-        ctx.side, ctx.edge, ctx.true_probability, reasoning_str = self._calculate_edge(
-            market, ctx.aggregated_signal, ctx.momentum
+        # Calculate probability and edge using probability engine
+        prob_result = self.probability_engine.calculate(
+            market=market,
+            aggregated_signal=ctx.aggregated_signal,
+            momentum=ctx.momentum
         )
-        ctx.reasoning.append(reasoning_str)
+        
+        ctx.side = prob_result.side
+        ctx.edge = prob_result.edge
+        ctx.true_probability = prob_result.true_probability
+        ctx.reasoning.append(prob_result.reasoning)
         
         # Run filters
         for filter_obj in self.filters:
@@ -288,62 +301,3 @@ class MarketEvaluator:
         
         return True, ctx
     
-    def _calculate_edge(
-        self,
-        market: FifteenMinMarket,
-        aggregated_signal: AggregatedSignal,
-        momentum: Optional[MomentumData]
-    ) -> tuple[str, float, float, str]:
-        """Calculate edge using signals and calibration."""
-        # Get fair probabilities (remove vig)
-        total = market.up_price + market.down_price
-        fair_up = market.up_price / total if total > 0 else 0.5
-        fair_down = market.down_price / total if total > 0 else 0.5
-        
-        # Momentum-based probability estimation
-        prob_adjustment = aggregated_signal.probability_adjustment
-        adjusted_prob_shift = prob_adjustment * (0.5 + aggregated_signal.confidence * 0.5)
-        
-        raw_up = max(0.30, min(0.85, fair_up + adjusted_prob_shift))
-        raw_down = max(0.30, min(0.85, fair_down - adjusted_prob_shift))
-        
-        # Apply calibration
-        if raw_up > raw_down:
-            calibration = self.calibrator.calibrate(raw_up)
-            true_up = calibration.calibrated_prob
-            true_down = 1 - true_up
-        else:
-            calibration = self.calibrator.calibrate(raw_down)
-            true_down = calibration.calibrated_prob
-            true_up = 1 - true_down
-        
-        # Blend if low confidence
-        if calibration.confidence < 0.5:
-            blend = calibration.confidence
-            true_up = raw_up * (1 - blend) + true_up * blend
-            true_down = raw_down * (1 - blend) + true_down * blend
-        
-        # Calculate expected value
-        up_ev = true_up * (1 - market.up_price) - (1 - true_up) * market.up_price
-        down_ev = true_down * (1 - market.down_price) - (1 - true_down) * market.down_price
-        
-        # Choose best side
-        if up_ev > down_ev:
-            side = "Up"
-            edge = up_ev
-            true_prob = true_up
-        else:
-            side = "Down"
-            edge = down_ev
-            true_prob = true_down
-        
-        # Build reasoning
-        signal_dir = aggregated_signal.direction.value
-        momentum_str = f" | Mom: {momentum.trend_strength*100:+.2f}%" if momentum else ""
-        reasoning = (
-            f"Signal: {signal_dir} ({aggregated_signal.strength:.0%}){momentum_str} | "
-            f"Cal: {calibration.bucket} | "
-            f"{aggregated_signal.reasoning}"
-        )
-        
-        return side, edge, true_prob, reasoning

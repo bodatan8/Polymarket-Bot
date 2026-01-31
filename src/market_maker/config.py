@@ -17,14 +17,14 @@ class TradingConfig:
     high_frequency_mode: bool = True
     
     # High-frequency mode settings
-    hf_min_edge: float = 0.01  # 1% minimum edge
-    hf_min_confidence: float = 0.45  # 45% confidence
-    hf_min_signal_strength: float = 0.10  # 10% signal strength
+    hf_min_edge: float = 0.001  # 0.1% minimum edge (very aggressive)
+    hf_min_confidence: float = 0.25  # 25% confidence (very low - match active traders)
+    hf_min_signal_strength: float = 0.01  # 1% signal strength (minimal)
     hf_bet_size_multiplier: float = 0.5  # 0.5x base size
     hf_max_positions_per_cycle: int = 20
-    hf_timing_window: Tuple[int, int] = (30, 600)  # 30s to 10min
-    hf_min_market_uncertainty: float = 0.03  # 3% from 50%
-    hf_min_polymarket_volume: float = 100.0  # $100 minimum
+    hf_timing_window: Tuple[int, int] = (30, 1800)  # 30s to 30min (catch available markets, avoid very far out)
+    hf_min_market_uncertainty: float = 0.01  # 1% from 50% (more permissive)
+    hf_min_polymarket_volume: float = 0.0  # No minimum volume requirement
     hf_cycle_interval: int = 5  # 5 seconds
     
     # Quality mode settings

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp",
+      "readOnly": true,
+      "auth": {
+        "type": "bearer",
+        "token": "sbp_67b7a44ace1ee5a356ea3fe03d37f62aa276d58a"
+      },
+      "projectRef": "oukirnoonygvvctrjmih"
+    }
+  }
+}

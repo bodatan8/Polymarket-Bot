@@ -240,6 +240,10 @@ class VolumeDetector:
         """
         stats = self.get_volume_stats(asset)
         
+        # If no history, allow trading (will build history over time)
+        if stats.avg_rate_5m == 0:
+            return True, "No volume history yet - allowing trade"
+        
         # Don't trade during drought (low liquidity)
         if stats.z_score <= self.DROUGHT_THRESHOLD:
             return False, f"Volume drought ({stats.z_score:.1f}σ below normal)"

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import PaperTrading from './PaperTrading'
 
 interface Stats {
   total_bets: number
@@ -85,6 +86,29 @@ interface DashboardData {
   timestamp: string
 }
 
+interface LiveSignal {
+  symbol: string
+  direction: string
+  confidence: number
+  accuracy_estimate: number
+  timestamp: string
+  expiry_minutes: number
+  rsi: number
+  ema8_distance: number
+  volatility_ratio: number
+  hour_utc: number
+  is_rsi_extreme: boolean
+  is_ema_extended: boolean
+  is_high_volatility: boolean
+  is_good_hour: boolean
+  reasoning: string
+}
+
+interface SignalsData {
+  signals: Record<string, LiveSignal>
+  timestamp: string
+}
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function StatCard({ label, value, subValue, color = 'white' }: { label: string; value: string; subValue?: string; color?: string }) {
@@ -147,6 +171,93 @@ function TimingBucketCard({ name, bucket }: { name: string; bucket: TimingBucket
         <div className={`text-sm font-mono font-bold ${roiColor}`}>{bucket.roi}</div>
       </div>
       <div className="text-xs text-gray-500 mt-1">{bucket.win_rate} WR</div>
+    </div>
+  )
+}
+
+function LiveSignalCard({ asset, signal }: { asset: string; signal: LiveSignal }) {
+  const isUp = signal.direction === 'UP'
+  const isDown = signal.direction === 'DOWN'
+  const hasSignal = signal.direction !== 'NO_SIGNAL'
+  
+  const bgColors: Record<string, string> = {
+    BTC: 'border-orange-500/50',
+    ETH: 'border-blue-500/50',
+    SOL: 'border-purple-500/50',
+  }
+  
+  const expiryTime = new Date(new Date(signal.timestamp).getTime() + signal.expiry_minutes * 60000)
+  const now = new Date()
+  const timeLeft = Math.max(0, Math.floor((expiryTime.getTime() - now.getTime()) / 1000))
+  const minsLeft = Math.floor(timeLeft / 60)
+  const secsLeft = timeLeft % 60
+  
+  return (
+    <div className={`bg-poly-card border-2 ${bgColors[asset] || 'border-poly-border'} rounded-xl p-4 ${hasSignal ? 'ring-2 ring-offset-2 ring-offset-poly-dark' : ''} ${isUp ? 'ring-poly-green' : isDown ? 'ring-poly-red' : ''}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${asset === 'BTC' ? 'bg-orange-500' : asset === 'ETH' ? 'bg-blue-500' : 'bg-purple-500'}`}>
+            {asset}
+          </div>
+          <div className="font-bold">{asset}/USDT</div>
+        </div>
+        {hasSignal && (
+          <div className={`px-3 py-1 rounded-full text-sm font-bold ${isUp ? 'bg-poly-green/20 text-poly-green' : 'bg-poly-red/20 text-poly-red'}`}>
+            {signal.direction}
+          </div>
+        )}
+        {!hasSignal && (
+          <div className="px-3 py-1 rounded-full text-sm font-bold bg-gray-700 text-gray-400">
+            WAITING
+          </div>
+        )}
+      </div>
+      
+      {hasSignal ? (
+        <>
+          <div className="grid grid-cols-2 gap-2 mb-3 text-sm">
+            <div className="bg-black/20 rounded p-2">
+              <div className="text-gray-500 text-xs">Confidence</div>
+              <div className="font-mono font-bold">{(signal.confidence * 100).toFixed(0)}%</div>
+            </div>
+            <div className="bg-black/20 rounded p-2">
+              <div className="text-gray-500 text-xs">Est. Accuracy</div>
+              <div className="font-mono font-bold text-poly-green">{(signal.accuracy_estimate * 100).toFixed(0)}%</div>
+            </div>
+            <div className="bg-black/20 rounded p-2">
+              <div className="text-gray-500 text-xs">RSI</div>
+              <div className={`font-mono font-bold ${signal.is_rsi_extreme ? (signal.rsi < 50 ? 'text-poly-green' : 'text-poly-red') : ''}`}>
+                {signal.rsi.toFixed(1)}
+              </div>
+            </div>
+            <div className="bg-black/20 rounded p-2">
+              <div className="text-gray-500 text-xs">EMA8 Dist</div>
+              <div className={`font-mono font-bold ${signal.is_ema_extended ? (signal.ema8_distance < 0 ? 'text-poly-green' : 'text-poly-red') : ''}`}>
+                {signal.ema8_distance > 0 ? '+' : ''}{signal.ema8_distance.toFixed(2)}%
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-1 flex-wrap mb-2">
+            {signal.is_rsi_extreme && <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">RSI Extreme</span>}
+            {signal.is_ema_extended && <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">EMA Extended</span>}
+            {signal.is_high_volatility && <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">High Vol</span>}
+            {signal.is_good_hour && <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">Good Hour</span>}
+          </div>
+          
+          <div className="text-xs text-gray-400 mb-2">{signal.reasoning}</div>
+          
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-gray-500">Expires in:</span>
+            <span className="font-mono text-yellow-400">{minsLeft}:{secsLeft.toString().padStart(2, '0')}</span>
+          </div>
+        </>
+      ) : (
+        <div className="text-center py-4 text-gray-500">
+          <div className="text-xs mb-1">No extreme conditions</div>
+          <div className="text-xs">RSI: {signal.rsi?.toFixed(1) || '-'} | EMA: {signal.ema8_distance?.toFixed(2) || '-'}%</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -366,18 +477,55 @@ function PositionCard({ position, isOpen }: { position: Position; isOpen: boolea
   )
 }
 
+type ViewMode = 'live' | 'paper'
+
 function App() {
+  const [viewMode, setViewMode] = useState<ViewMode>('paper')  // Default to paper trading
   const [data, setData] = useState<DashboardData | null>(null)
+  const [signals, setSignals] = useState<SignalsData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  
+  // If paper trading mode, render the PaperTrading component
+  if (viewMode === 'paper') {
+    return (
+      <div>
+        {/* View Switcher */}
+        <div className="fixed top-4 right-4 z-50 flex gap-2">
+          <button
+            onClick={() => setViewMode('live')}
+            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm hover:bg-gray-700 transition"
+          >
+            Live Trading
+          </button>
+          <button
+            className="px-4 py-2 bg-purple-600 border border-purple-500 rounded-lg text-sm font-bold"
+          >
+            Paper Trading
+          </button>
+        </div>
+        <PaperTrading />
+      </div>
+    )
+  }
 
   const fetchData = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/dashboard`)
-      if (!response.ok) throw new Error('Failed to fetch data')
-      const json = await response.json()
-      setData(json)
+      const [dashResponse, signalsResponse] = await Promise.all([
+        fetch(`${API_URL}/api/dashboard`),
+        fetch(`${API_URL}/api/signals/live`)
+      ])
+      
+      if (!dashResponse.ok) throw new Error('Failed to fetch dashboard data')
+      const dashJson = await dashResponse.json()
+      setData(dashJson)
+      
+      if (signalsResponse.ok) {
+        const signalsJson = await signalsResponse.json()
+        setSignals(signalsJson)
+      }
+      
       setError(null)
       setLastUpdate(new Date())
     } catch (err) {
@@ -389,6 +537,7 @@ function App() {
 
   useEffect(() => {
     fetchData()
+    // Fetch every 5 seconds for live signals - faster to catch opportunities
     const interval = setInterval(fetchData, 5000)
     return () => clearInterval(interval)
   }, [])
@@ -429,6 +578,21 @@ function App() {
   return (
     <div className="min-h-screen bg-poly-dark p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
+        {/* View Switcher */}
+        <div className="flex gap-2 mb-4">
+          <button
+            className="px-4 py-2 bg-blue-600 border border-blue-500 rounded-lg text-sm font-bold"
+          >
+            Live Trading
+          </button>
+          <button
+            onClick={() => setViewMode('paper')}
+            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm hover:bg-gray-700 transition"
+          >
+            Paper Trading
+          </button>
+        </div>
+
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <div>
@@ -489,6 +653,33 @@ function App() {
             subValue={timing?.best_bucket ? `Best: ${timing.best_bucket}` : undefined}
             color={roi >= 0 ? 'green' : 'red'}
           />
+        </div>
+
+        {/* Live Prediction Signals */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <span className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></span>
+              Live Prediction Signals (7-min window)
+            </h2>
+            <div className="text-xs text-gray-500">
+              Mean Reversion Strategy | 62% Expected Accuracy
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {signals?.signals ? (
+              Object.entries(signals.signals).map(([asset, signal]) => (
+                <LiveSignalCard key={asset} asset={asset} signal={signal as LiveSignal} />
+              ))
+            ) : (
+              <div className="col-span-3 bg-poly-card border border-poly-border rounded-xl p-8 text-center text-gray-500">
+                <div className="text-4xl mb-2">&#128161;</div>
+                <div>Loading live signals...</div>
+                <div className="text-sm">Analyzing BTC, ETH, SOL for mean-reversion opportunities</div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Timing & Risk Section */}

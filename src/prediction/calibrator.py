@@ -184,7 +184,7 @@ class ProbabilityCalibrator:
         
         direction = "down" if adjustment < 0 else "up"
         reasoning = (
-            f"Bucket {bucket_name}: predicted {bucket_midpoint:.0%}, "
+            f"Bucket {bucket_name}: predicted {predicted_probability:.0%}, "
             f"actual {actual_rate:.0%} ({bucket.predictions} samples) → "
             f"adjust {direction} {abs(adjustment)*100:.1f}%"
         )

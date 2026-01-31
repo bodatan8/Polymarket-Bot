@@ -1,0 +1,19 @@
+# Signal Runner - Continuous 10-second signal checker
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source
+COPY src/ ./src/
+
+# Environment variables (set in Azure Container Apps)
+ENV SUPABASE_URL=""
+ENV SUPABASE_SERVICE_ROLE_KEY=""
+ENV POLYMARKET_BOT_URL=""
+
+# Run the signal runner
+CMD ["python", "-m", "src.signals.signal_runner"]
